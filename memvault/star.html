@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>3D cradle 星图</title>
+<!-- ★ 核心修改：引入 3D 库 -->
+<script src="https://fastly.jsdelivr.net/npm/3d-force-graph">
+window.__toggleInfer = function(on) {
+  SHOW_INFERRED = !!on;
+  if (typeof Graph !== 'undefined' && Graph.graphData) {
+    const g = Graph.graphData();
+    Graph.graphData({ nodes: g.nodes, links: g.links.filter(l => SHOW_INFERRED || (l.edge_type||'fact') === 'fact') });
+  }
+};
+</script>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b1020; color: #e6e6e6;
+    font-family: system-ui, "Microsoft YaHei", sans-serif; overflow: hidden; }
+  #graph { width: 100%; height: 100vh; }
+  #panel { position: fixed; top: 12px; left: 12px; width: 260px;
+    background: rgba(16,22,40,.92); border: 1px solid #2a3556; border-radius: 10px;
+    padding: 12px; font-size: 13px; z-index: 10; }
+  #panel h3 { margin: 0 0 8px; font-size: 14px; color: #8fb4ff; }
+  #panel label { display: block; margin-top: 8px; color: #9aa7c7; }
+  #panel input, #panel select { width: 100%; box-sizing: border-box; margin-top: 4px;
+    padding: 6px; background: #0f1730; color: #e6e6e6;
+    border: 1px solid #2a3556; border-radius: 6px; }
+  #legend { margin-top: 12px; }
+  #legend div { margin: 4px 0; }
+  #legend span { display: inline-block; width: 10px; height: 10px;
+    border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  #detail { position: fixed; bottom: 12px; right: 12px; width: 300px;
+    background: rgba(16,22,40,.95); border: 1px solid #2a3556; border-radius: 10px;
+    padding: 12px; font-size: 13px; display: none; z-index: 10; }
+  #detail h4 { margin: 0 0 8px; color: #8fb4ff; }
+  #detail div { margin: 4px 0; line-height: 1.5; }
+  #detail .close { float: right; cursor: pointer; color: #9aa7c7; }
+  #tip { position: fixed; bottom: 12px; left: 12px; font-size: 12px;
+    color: #6c7a99; z-index: 10; }
+  #search-results {
+    position: fixed; top: 12px; right: 12px; width: 300px;
+    max-height: calc(100vh - 350px); overflow-y: auto;
+    background: rgba(16,22,40,.92); border: 1px solid #2a3556; border-radius: 10px;
+    padding: 12px; font-size: 12px; line-height: 1.6; color: #adb5bd;
+    z-index: 10; display: none; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  }
+</style>
+</head>
+<body>
+
+<div id="panel">
+  <h3>3D cradle 星图</h3>
+  <label>搜索节点</label>
+  <input id="search" placeholder="输入名字..." />
+  <label>按类型筛选</label>
+  <select id="filter"><option value="">全部</option></select>
+  <label>时间轴回溯</label>
+  <input type="range" id="time-slider" min="0" max="100" value="100" style="width: 100%; margin-top: 8px;">
+  <div id="time-display" style="font-size: 12px; color: #8fb4ff; margin-top: 4px;">显示全部记忆</div>
+  <div id="legend"></div>
+</div>
+
+<div id="search-results"></div>
+<div id="detail">
+  <span class="close" id="detail-close">×</span>
+  <h4 id="d-name"></h4>
+  <div id="d-type"></div>
+  <div id="d-summary"></div>
+  <div id="d-source"></div>
+  <div id="d-conf"></div>
+</div>
+
+<div id="tip">拖拽旋转 · 滚轮缩放 · 点击节点看详情</div>
+<div id="graph"></div>
+
+<script>
+// ================= 全局变量 =================
+let Graph = null;
+const COLORS = {
+  "definition": "#4dabf7",   // 定义卡：蓝
+  "fact":       "#4dabf7",
+  "preference": "#c77dff",   // 偏好：紫
+  "event":      "#ffd43b",   // 事件：黄
+  "tool":       "#69db7c",   // 工具：绿
+  "experience": "#ff8fab",   // 经验：粉
+  "note":       "#e0e0e0",   // 笔记：白
+  "rule":       "#ff6b6b",   // 规则：红
+  "chronicle":  "#00d4ff",
+  "实体": "#adb5bd"
+};
+
+// ================= 从服务器动态拉取数据 =================
+let DATA = { nodes: [], edges: [] };
+let SHOW_INFERRED = false;
+
+async function loadData() {
+    try {
+        const response = await fetch('/graph'); // 请求后台接口
+        if (!response.ok) throw new Error("网络错误");
+        DATA = await response.json(); // 拿到真实数据
+        renderGraph(); // 数据到了，开始画图
+    } catch (error) {
+        console.error("读取数据失败:", error);
+        document.getElementById("tip").textContent = "❌ 无法连接到数据库，请确保 server.py 正在运行。";
+    }
+}
+
+// ================= 渲染星图 =================
+function renderGraph() {
+    Graph = ForceGraph3D()(document.getElementById('graph'))
+      .backgroundColor('#050810')
+      .nodeLabel(node => `<div style="padding:4px; color:#fff; background:rgba(0,0,0,0.8); border-radius:4px;">${node.label}</div>`)
+      .nodeColor(node => COLORS[node.group] || '#adb5bd')
+      .nodeRelSize(3.5)
+      .nodeVal(node => node.size || 10)
+      .linkDirectionalParticles(2) 
+      .linkDirectionalParticleWidth(1.2)
+      .linkDirectionalParticleSpeed(0.006)
+      .linkDirectionalParticleColor(() => '#ffffff')
+      .linkColor(l => {
+        const t = l.edge_type || 'fact';
+        if (t === 'fact')       return 'rgba(143,180,255,0.55)';
+        if (t === 'structural') return 'rgba(150,150,150,0.30)';
+        return 'rgba(120,120,120,0.18)';           // inferred：刻意退后
+      })
+      .linkWidth(l => l.edge_type === 'fact' ? 1.0 : 0.35)
+      .linkOpacity(1)
+      .linkLabel(link => link.label)
+      .d3AlphaDecay(0.05)      
+      .d3VelocityDecay(0.4);
+
+    // 转换数据格式
+    const gData = {
+      nodes: DATA.nodes.map(n => ({ ...n, id: String(n.id) })),
+      links: DATA.edges.filter(e => SHOW_INFERRED || (e.edge_type || 'fact') === 'fact')
+        .map(e => ({ source: String(e.from), target: String(e.to),
+                     label: (e.edge_type === 'inferred' ? '推断·不可溯源 · ' : '') + (e.label || ''),
+                     edge_type: e.edge_type || 'fact' }))
+    };
+    Graph.graphData(gData);
+
+    // 自动旋转
+    Graph.controls().autoRotate = true;
+    Graph.controls().autoRotateSpeed = 0.8;
+    Graph.controls().addEventListener('start', () => Graph.controls().autoRotate = false);
+    Graph.controls().addEventListener('end', () => setTimeout(() => Graph.controls().autoRotate = true, 2000));
+
+    // 初始化 UI 控件
+    initUI();
+}
+
+// ================= 初始化 UI =================
+function initUI() {
+    const types = [...new Set(DATA.nodes.map(n => n.group))];
+    const filterEl = document.getElementById("filter");
+    const legendEl = document.getElementById("legend");
+    filterEl.innerHTML = '<option value="">全部</option>'; // 清空
+    legendEl.innerHTML = ""; // 清空
+    types.forEach(t => {
+      filterEl.insertAdjacentHTML("beforeend", `<option value="${t}">${t}</option>`);
+      legendEl.insertAdjacentHTML("beforeend", `<div><span style="background:${COLORS[t] || "#adb5bd"}"></span>${t}</div>`);
+    });
+
+    // 时间轴
+    const timeSlider = document.getElementById("time-slider");
+    const timeDisplay = document.getElementById("time-display");
+    let maxTime = Date.now();
+    if (DATA.nodes.length > 0) {
+        const times = DATA.nodes.map(n => new Date(n.created_at || Date.now()).getTime());
+        maxTime = Math.max(...times);
+        timeSlider.min = Math.min(...times);
+        timeSlider.max = maxTime;
+        timeSlider.value = maxTime;
+    }
+    timeSlider.addEventListener("input", (e) => {
+        const selectedTime = parseInt(e.target.value);
+        timeDisplay.textContent = selectedTime === maxTime ? "显示全部记忆" : "早于: " + new Date(selectedTime).toLocaleString();
+        Graph.nodeVisibility(n => new Date(n.created_at || Date.now()).getTime() <= selectedTime);
+    });
+
+    // 详情
+    const detail = document.getElementById("detail");
+    Graph.onNodeClick(node => {
+      document.getElementById("d-name").textContent = node.label || "";
+      document.getElementById("d-type").textContent = "类型：" + (node.group || "—");
+      document.getElementById("d-summary").textContent = "摘要：" + (node.summary || "—");
+      document.getElementById("d-source").textContent = "来源：" + (node.source || "—");
+      document.getElementById("d-conf").textContent = "置信度：" + (node.confidence != null ? node.confidence : "—");
+      detail.style.display = "block";
+      
+      const distance = 150;
+      const distRatio = 1 + distance/Math.hypot(node.x, node.y, node.z);
+      Graph.cameraPosition({ x: node.x * distRatio, y: node.y * distRatio, z: node.z * distRatio }, node, 2000);
+    });
+    document.getElementById("detail-close").onclick = () => detail.style.display = "none";
+
+    // 搜索
+    const searchEl = document.getElementById("search");
+    const searchResults = document.getElementById("search-results");
+    searchEl.addEventListener("input", e => {
+      const kw = e.target.value.trim();
+      if (!kw) {
+        Graph.nodeColor(n => COLORS[n.group] || '#adb5bd').nodeOpacity(1);
+        searchResults.style.display = "none";
+        return;
+      }
+      
+      const hit = DATA.nodes.filter(n => (n.label || "").includes(kw) || (n.summary || "").includes(kw)).map(n => String(n.id));
+      Graph.nodeColor(n => hit.includes(n.id) ? '#ffffff' : 'rgba(50, 60, 80, 0.1)');
+
+      if (hit.length) {
+        const firstNode = gData.nodes.find(n => n.id === hit[0]);
+        if (firstNode) {
+          const distance = 150;
+          const distRatio = 1 + distance/Math.hypot(firstNode.x, firstNode.y, firstNode.z);
+          Graph.cameraPosition({ x: firstNode.x * distRatio, y: firstNode.y * distRatio, z: firstNode.z * distRatio }, firstNode, 1500);
+        }
+      }
+
+      let html = "<strong>🔍 检索结果：</strong><br>";
+      hit.forEach(id => {
+        const n = DATA.nodes.find(node => String(node.id) === id);
+        html += `<div style="margin-top:8px; color:#fff;">[${n.group}] ${n.label}</div>`;
+        DATA.edges.forEach(e => {
+          if (String(e.from) === id || String(e.to) === id) {
+            const s = DATA.nodes.find(x => String(x.id) === String(e.from))?.label || "未知";
+            const d = DATA.nodes.find(x => String(x.id) === String(e.to))?.label || "未知";
+            html += `<div style="margin-left:10px; color:#8fb4ff;">↳ ${s} --[${e.label}]--> ${d}</div>`;
+          }
+        });
+      });
+      searchResults.innerHTML = html;
+      searchResults.style.display = "block";
+    });
+
+    // 筛选
+    filterEl.addEventListener("change", e => {
+      const t = e.target.value;
+      Graph.nodeVisibility(n => !t || n.group === t);
+    });
+}
+
+// ================= 启动 =================
+loadData(); // 页面加载后立即请求数据
+</script>
+
+<!-- 保留你的小鲸鱼和背景 -->
+<style>
+body{background:radial-gradient(1200px 800px at 20% 0%, #0d2233 0%, #081420 45%, #050c14 100%) !important;}
+#xm-whale{position:fixed;right:20px;bottom:16px;width:120px;opacity:.45;pointer-events:none;z-index:9999;filter:drop-shadow(0 0 12px rgba(90,180,255,.35));}
+</style>
+<div id="xm-whale">
+<svg viewBox="0 0 240 120" xmlns="http://www.w3.org/2000/svg">
+  <ellipse cx="118" cy="66" rx="78" ry="34" fill="#7fd0ff"/>
+  <path d="M196 62 L236 40 L228 66 L238 92 Z" fill="#7fd0ff"/>
+  <circle cx="74" cy="58" r="5" fill="#0a1a26"/>
+  <path d="M52 78 q26 14 52 0" stroke="#0a1a26" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <path d="M100 34 q6 -18 20 -22" stroke="#a7e3ff" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <circle cx="122" cy="11" r="4" fill="#c9f0ff"/>
+  <circle cx="134" cy="5" r="3" fill="#c9f0ff"/>
+</svg>
+</div>
+</body>
+</html>

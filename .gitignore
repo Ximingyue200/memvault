@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.bak*
+/data/
+/reports/
+/registry/skills/*.local.md
+.venv/

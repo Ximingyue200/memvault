@@ -1,0 +1,248 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>cradle 导图</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:#0b0d10;color:#e5e7eb;
+  font-family:-apple-system,"PingFang SC","Noto Sans CJK SC",sans-serif;overflow:hidden}
+#c{width:100%;height:100%}
+#hud{position:fixed;left:12px;top:12px;background:rgba(20,23,28,.92);
+  border:1px solid #262a31;border-radius:12px;padding:9px 12px;font-size:12px;
+  line-height:1.8;backdrop-filter:blur(8px);z-index:5;max-width:64vw}
+#hud b{font-size:14px;font-weight:600}
+#hud .k{color:#8892a0}
+#hud a{color:#7cc4ff;text-decoration:none}
+#dims{position:fixed;left:12px;right:12px;top:86px;display:flex;gap:7px;
+  overflow-x:auto;z-index:6;padding:2px 0;scrollbar-width:none}
+#dims::-webkit-scrollbar{display:none}
+#dims b{flex:0 0 auto;padding:5px 12px;border-radius:999px;font-size:12px;font-weight:500;
+  background:#171b21;border:1px solid #262a31;color:#8892a0;cursor:pointer;white-space:nowrap}
+#dims b.on{background:#1d2635;border-color:#3a5a8a;color:#9dc7ff}
+#tip{position:fixed;right:12px;bottom:10px;font-size:11px;color:#4b5563;z-index:5}
+#pop{position:fixed;inset:auto 0 0 0;max-height:60vh;overflow:auto;background:#12151a;
+  border-top:1px solid #262a31;transform:translateY(101%);transition:transform .2s ease;
+  z-index:9;padding:14px 16px 56px;border-radius:16px 16px 0 0}
+#pop.on{transform:translateY(0)}
+#pop h3{margin:0 0 3px;font-size:15px}
+#pop .sub{color:#8892a0;font-size:12px;margin-bottom:10px}
+#pop .item{padding:9px 0;border-top:1px solid #1e232a;font-size:13.5px;line-height:1.55}
+#pop .item span{color:#5c6673;font-size:11.5px;margin-left:6px}
+#pop .close{position:absolute;right:14px;top:11px;color:#6b7280;font-size:20px}
+</style></head><body>
+<div id="c"></div>
+<div id="hud"><b>cradle 导图</b><br><span class="k">加载中…</span></div>
+<div id="dims">
+  <b data-by="category">按分类</b>
+  <b data-by="layer">按层次</b>
+  <b data-by="kind">按类型</b>
+  <b data-by="time">按时间</b>
+  <b data-by="owner">按归属</b>
+  <b data-by="claim">按断言</b>
+</div>
+<div id="tip">点击展开/收起 · 拖动平移 · 双指缩放</div>
+<div id="pop"><span class="close">×</span><div id="popbody"></div></div>
+
+<script src="https://fastly.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+<script>
+const hud = document.getElementById('hud');
+const pop = document.getElementById('pop'), popbody = document.getElementById('popbody');
+const COLORS = {definition:'#4dabf7',fact:'#3b9ae1',event:'#ffd43b',
+  experience:'#ff8fab',tool:'#69db7c',preference:'#c77dff',note:'#e0e0e0',
+  rule:'#ff6b6b',root:'#d8dee9'};
+
+if (typeof echarts === 'undefined'){
+  hud.innerHTML = '<b>cradle 导图</b><br><span class="k">ECharts 没加载出来</span>';
+}
+
+let chart = null, CUR = 'kind';
+
+function toECharts(n, depth){
+  const item = {
+    name: n.name + (n.n && depth <= 1 ? '  ' + n.n : ''),
+    value: n.n || 0,
+    _raw: n,
+    symbolSize: depth === 0 ? 14 : (depth === 1 ? 10 : (depth === 2 ? 7 : 5)),
+    itemStyle: {
+      color: depth === 0 ? COLORS.root : (COLORS[n.kind] || '#8892a0'),
+      opacity: depth >= 3 ? 0.6 : 1,
+      borderWidth: 0,
+    },
+    label: {
+      fontSize: depth === 0 ? 15 : (depth === 1 ? 13 : 11.5),
+      color: depth === 0 ? '#fff' : (depth === 1 ? '#dfe3e8' : '#8f99a6'),
+      fontWeight: depth <= 1 ? 600 : 400,
+    },
+  };
+  if (n.children && n.children.length){
+    item.children = n.children.map(c => toECharts(c, depth + 1));
+  }
+  return item;
+}
+
+function render(data){
+  chart = echarts.init(document.getElementById('c'), null, { renderer: 'canvas' });
+  chart.setOption({
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'item', triggerOn: 'mousemove',
+      backgroundColor: 'rgba(18,21,26,.96)', borderColor: '#2a2f38',
+      textStyle: { color: '#e5e7eb', fontSize: 12 },
+      formatter: p => {
+        const r = p.data._raw || {};
+        if (r.card_id) return r.name + '<br><span style="color:#6b7280">#' + r.card_id + '</span>';
+        return '<b>' + (r.name || p.name) + '</b><br>' +
+          '<span style="color:#8892a0">' + (r.n || 0) + ' 张' +
+          (r.topics ? ' · ' + r.topics + ' 个主题' : '') + '</span>';
+      },
+    },
+    series: [{
+      type: 'tree',
+      data: [toECharts(data, 0)],
+      layout: 'orthogonal',
+      orient: 'LR',
+      top: '16%', left: '26%', bottom: '6%', right: '17%',
+      symbol: 'circle',
+      initialTreeDepth: 2,
+      roam: true,
+      animationDuration: 320,
+      animationDurationUpdate: 320,
+      expandAndCollapse: true,
+      edgeShape: 'curve',
+      edgeForkPosition: '55%',
+      lineStyle: { color: 'rgba(120,140,170,.28)', width: 1, curveness: 0.5 },
+      emphasis: { focus: 'descendant', lineStyle: { color: 'rgba(140,180,255,.6)' } },
+      label: { position: 'left', verticalAlign: 'middle', align: 'right', distance: 8, rotate: 0 },
+      leaves: { label: { position: 'right', align: 'left', distance: 8, rotate: 0 } },
+    }],
+  });
+  chart.on('click', p => {
+    const r = (p.data && p.data._raw) || {};
+    if (r.card_id){ openCard(r.card_id); return; }
+    if (r.id && (r.id.startsWith('t:') || r.id.startsWith('w:') || r.id.startsWith('d:')))
+      openTopic(r);
+  });
+  hud.innerHTML = '<b>cradle 导图</b><br><span class="k">' +
+    (data.n || 0) + ' 张卡 · ' + (data.children ? data.children.length : 0) +
+    ' 个分支 · <a href="/admin">后台</a></span>';
+}
+
+async function openTopic(node){
+  const parts = node.id.split(':');
+  const topic = parts[parts.length - 1];
+  const group = node.group || '';
+  /* 沉淀认知 / 知识摘要 不在 cards 表里，直接跳对应页面 */
+  if (group === '沉淀认知'){ location.href = '/admin#dream'; return; }
+  if (group === '知识摘要'){ location.href = '/admin#chron'; return; }
+  pop.classList.add('on');
+  popbody.innerHTML = '<h3>' + node.name + '</h3><div class="sub">加载中…</div>';
+  try {
+    const r = await fetch('/tree/cards?by=' + CUR +
+      '&group=' + encodeURIComponent(group) +
+      '&topic=' + encodeURIComponent(topic) + '&limit=60');
+    const items = await r.json();
+    popbody.innerHTML = '<h3>' + node.name + '</h3><div class="sub">' +
+      kind + ' · ' + items.length + ' 张（最新在前）</div>' +
+      (items.length ? items.map(it => '<div class="item" data-cid="' + it.card_id + '">' +
+        esc(it.name) + '<span>#' + it.card_id + '</span></div>').join('')
+        : '<div class="sub">没有卡片</div>');
+  } catch(e){
+    popbody.innerHTML = '<h3>' + node.name + '</h3><div class="sub">加载失败</div>';
+  }
+}
+
+function openCard(cid){ location.href = '/admin#search'; }
+
+function esc(s){ return (s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+pop.querySelector('.close').addEventListener('click', () => pop.classList.remove('on'));
+
+function loadTree(by){
+  CUR = by;
+  document.querySelectorAll('#dims b').forEach(b =>
+    b.classList.toggle('on', b.dataset.by === by));
+  hud.innerHTML = '<b>cradle 导图</b><br><span class="k">加载中…</span>';
+  if(by === 'time'){ return drawTimeLine(); }
+  fetch('/tree?by=' + by + '&per=' + (by === 'month' ? 18 : by === 'layer' ? 10 : 26))
+    .then(r => r.json()).then(d => render(d))
+    .catch(e => { hud.innerHTML = '<b>cradle 导图</b><br><span class="k">加载失败：' + e + '</span>'; });
+}
+
+document.querySelectorAll('#dims b').forEach(b =>
+  b.addEventListener('click', () => loadTree(b.dataset.by)));
+
+/* 支持 ?by=layer 直接进入某个维度（等 DOM 就绪再跑，避免首次渲染被覆盖） */
+window.addEventListener('load', function(){
+  const q = new URLSearchParams(location.search).get('by') || 'category';
+  const ok = document.querySelector('#dims b[data-by="' + q + '"]');
+  loadTree(ok ? q : 'category');
+});
+
+/* ── 时间维度：线性（横轴时间，纵轴 年/月/周/日），不是树 ── */
+function drawTimeLine(){
+  fetch('/tree?by=time&per=40').then(r=>r.json()).then(d=>{
+    const CO = {year:'#5aa9ff', month:'#5fd48a', week:'#ffc857', day:'#ff8fab'};
+    const YY = {year:0, month:-1, week:-1.85, day:-2.6};
+    const SZ = {year:24, month:16, week:10, day:6};
+    const nodes = [], links = [];
+
+    const dates = [];
+    (d.children||[]).forEach(y => (y.children||[]).forEach(m => dates.push(m.name+'-01')));
+    dates.sort();
+    const t0 = new Date(dates[0] || '2025-01-01').getTime();
+    const t1 = new Date(dates[dates.length-1] || '2026-12-01').getTime();
+    const span = Math.max(1, t1 - t0);
+    const X = dt => (dt - t0) / span * 100;
+
+    function mk(id, name, n, kind, dt){
+      nodes.push({
+        id, name, value:n, x:X(dt), y:YY[kind], symbolSize:SZ[kind],
+        itemStyle:{color:CO[kind], borderColor:'#0d0f12', borderWidth:1.2},
+        label:{show: kind==='year'||kind==='month', position:'bottom',
+               fontSize: kind==='year'?13:10.5,
+               color: kind==='year'?'#e6e9ef':'#9aa3b0'},
+      });
+    }
+
+    (d.children||[]).forEach(y => {
+      mk(y.id, y.name, y.n, 'year', new Date(y.name+'-06-01').getTime());
+      (y.children||[]).forEach(m => {
+        mk(m.id, Number(m.name.slice(5))+'月', m.n, 'month',
+           new Date(m.name+'-15').getTime());
+        links.push({source:y.id, target:m.id, lineStyle:{color:'#2a2f39', width:1.6}});
+        (m.children||[]).forEach(w => {
+          const wdt = new Date(m.name+'-01').getTime() + ((w.week-1)*7+3)*864e5;
+          mk(w.id, 'W'+w.week, w.n, 'week', wdt);
+          links.push({source:m.id, target:w.id, lineStyle:{color:'#23272f', width:1}});
+          (w.children||[]).forEach(dd => {
+            mk(dd.id, dd.name, dd.n, 'day', new Date(dd.day+'T12:00:00').getTime());
+            links.push({source:w.id, target:dd.id, lineStyle:{color:'#1c1f25', width:0.8}});
+          });
+        });
+      });
+    });
+
+    chart.clear();
+    chart.setOption({
+      backgroundColor:'transparent',
+      tooltip:{formatter:p => (p.data && p.data.value != null)
+        ? `${p.data.name}<br/>${p.data.value} 张` : ''},
+      series:[{
+        type:'graph', layout:'none', roam:true, draggable:false,
+        data:nodes, links:links,
+        emphasis:{focus:'adjacency', lineStyle:{width:2, color:'#5aa9ff'}},
+        scaleLimit:{min:0.3, max:12},
+      }],
+    }, true);
+    const w = chart.getWidth();
+    chart.setOption({series:[{ zoom: Math.min(w/150, 7), center:[50, -1.3] }]});
+    hud.innerHTML = '<b>cradle 导图</b><br><span class="k">' +
+      d.n.toLocaleString() + ' 张 · 一条时间轴（横=时间，纵=年/月/周/日）</span>';
+  }).catch(e => {
+    hud.innerHTML = '<b>cradle 导图</b><br><span class="k">加载失败：' + e + '</span>';
+  });
+}
+
+(function start(){
+  loadTree('category');
+  addEventListener('resize', () => chart && chart.resize());
+})();
+</script></body></html>
