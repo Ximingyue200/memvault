@@ -302,6 +302,12 @@ def _qd(_ignored=None):
         return {"pending": 0, "error": str(e)[:80]}
 
 
+class Srv(ThreadingHTTPServer):
+    """listen backlog 默认 5，并发会丢连接（listen 在 __init__ 里发生，只能靠类属性）。"""
+    request_queue_size = 256
+    daemon_threads = True
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "memvault/0.1"
 
@@ -1800,7 +1806,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    srv = ThreadingHTTPServer((HOST, PORT), Handler)
+    srv = Srv((HOST, PORT), Handler)
     sys.stderr.write("memvault listening on %s:%d (db=%s)\n" % (HOST, PORT, DB))
     srv.serve_forever()
 

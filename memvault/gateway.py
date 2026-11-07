@@ -178,6 +178,7 @@ from memvault import websearch as _ws   # noqa: E402
 HOST = os.environ.get("GW_HOST", "0.0.0.0")
 PORT = int(os.environ.get("GW_PORT", "4180"))
 RAW_PORT = int(os.environ.get("GW_RAW_PORT", "4182"))  # 无记忆注入的纯净入口
+UI_PORT = int(os.environ.get("GW_UI_PORT", "80"))     # 默认 HTTP 端口：http://host/admin，省掉 :4180
 UPSTREAM = os.environ.get("GW_UPSTREAM", "api.deepseek.com")
 UP_KEY = os.environ.get("GW_KEY") or os.environ.get("MEMVAULT_LLM_KEY", "")
 DB = os.environ.get("GW_DB", "/opt/memvault-gw/data/memvault.db")
@@ -1083,6 +1084,12 @@ def _ledger_usage(task, model, usage, key="", ms=0):
         pass
 
 
+class Srv(ThreadingHTTPServer):
+    """listen backlog 默认只有 5，50 并发会丢连接；类属性才生效（listen 在 __init__ 里发生）。"""
+    request_queue_size = 256
+    daemon_threads = True
+
+
 class H(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -1123,7 +1130,7 @@ class H(BaseHTTPRequestHandler):
         p = self.path.split("?")[0]
         # READ_GUARD_PATCHED
         if p in ("/settings", "/v1/settings", "/providers", "/v1/providers",
-                 "/providers/models", "/v1/providers/models", "/stats", "/debug") \
+                 "/providers/models", "/v1/providers/models", "/debug") \
                 and not self._auth_ok():
             return self._json(401, {"error": {"message": "unauthorized: 需要 Authorization: Bearer $GW_TOKEN"}})
         if p == "/":
@@ -3558,18 +3565,26 @@ class H(BaseHTTPRequestHandler):
 def main():
     if not UP_KEY:
         print("!! GW_KEY / MEMVAULT_LLM_KEY 未设置，上游会 401", flush=True)
-    srv = ThreadingHTTPServer((HOST, PORT), H)
+    srv = Srv((HOST, PORT), H)
     print(f"memvault gateway {HOST}:{PORT} -> {UPSTREAM}  db={DB}  topk={TOPK}", flush=True)
 
     raw = None
     if RAW_PORT and RAW_PORT != PORT:
         try:
-            raw = ThreadingHTTPServer((HOST, RAW_PORT), H)
+            raw = Srv((HOST, RAW_PORT), H)
             raw.noinject = True
             threading.Thread(target=raw.serve_forever, name="raw", daemon=True).start()
             print(f"memvault gateway raw (no memory) {HOST}:{RAW_PORT} -> {UPSTREAM}", flush=True)
         except Exception as e:
             print(f"!! raw listener on {RAW_PORT} failed: {e}", flush=True)
+
+    if UI_PORT and UI_PORT not in (PORT, RAW_PORT):
+        try:
+            ui = Srv((HOST, UI_PORT), H)
+            threading.Thread(target=ui.serve_forever, name="ui80", daemon=True).start()
+            print(f"memvault gateway ui {HOST}:{UI_PORT} -> /admin（同源，带记忆）", flush=True)
+        except Exception as e:
+            print(f"!! ui listener on {UI_PORT} failed: {e}", flush=True)
 
     try:
         srv.serve_forever()
