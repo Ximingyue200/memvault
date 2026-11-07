@@ -326,6 +326,16 @@ def search(con, q, topk=10, min_score=0.30, intent=None, role_filter=None, owner
                 pass
 
     out = []
+    # 旧卡 → 新卡 映射（supersedes 是「新卡指向旧卡」，反查才知道谁该降权）
+    _sup_map = {}
+    try:
+        for _oid, _nid in con.execute(
+            "SELECT id, supersedes FROM cards WHERE supersedes IS NOT NULL AND supersedes<>0"
+        ):
+            _sup_map[int(_oid)] = int(_nid)
+    except Exception:
+        _sup_map = {}
+
     for cid in cand:
         r = byid.get(cid)
         if not r:

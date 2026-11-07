@@ -517,7 +517,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._send(500, {"error": str(e)})
 
-        if p.path in ("/admin", "/a"):
+        if p.path in ("/admin", "/admin/", "/a"):
             # 只保留一套界面（4180/admin）；旧界面统一跳过去
             host = (self.headers.get("host") or "127.0.0.1").split(":")[0]
             self.send_response(302)
