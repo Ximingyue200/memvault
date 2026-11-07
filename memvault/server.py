@@ -221,7 +221,12 @@ def _injections(qs):
         lim = int((qs.get("limit") or ["60"])[0])
     except Exception:
         lim = 60
-    rows = con.execute("SELECT * FROM injections ORDER BY id DESC LIMIT ?", (lim,)).fetchall()
+    kind = (qs.get("kind") or [""])[0]
+    if kind in ("gw", "recall"):
+        rows = con.execute("SELECT * FROM injections WHERE kind=? ORDER BY id DESC LIMIT ?",
+                           (kind, lim)).fetchall()
+    else:
+        rows = con.execute("SELECT * FROM injections ORDER BY id DESC LIMIT ?", (lim,)).fetchall()
     items = []
     for r in rows:
         d = dict(r)
@@ -230,11 +235,24 @@ def _injections(qs):
         except Exception:
             d["card_ids"] = []
         items.append(d)
-    tot = con.execute("SELECT COUNT(*) n, COALESCE(SUM(chars),0) c FROM injections").fetchone()
-    td = con.execute("SELECT COUNT(*) n FROM injections WHERE at >= date('now')").fetchone()
-    return {"items": items, "total": tot["n"], "sum_chars": tot["c"],
-            "avg_chars": int(tot["c"] / tot["n"]) if tot["n"] else 0,
-            "today": td["n"]}
+    # 两种 kind 语义不同，必须分开给，否则「注入 1000 字」与「检索返回 1.3 万字」混成一个数：
+    #   gw     = 真正拼进 prompt 的注入块（chars 就是注入字符数）
+    #   recall = 检索 API（/v1/recall）返回给客户端的记忆正文量，不是注入
+    def _agg(where="1=1"):
+        r = con.execute("SELECT COUNT(*) n, COALESCE(SUM(chars),0) c FROM injections WHERE " + where).fetchone()
+        return int(r["n"]), int(r["c"])
+
+    n_all, c_all = _agg()
+    n_gw, c_gw = _agg("kind='gw'")
+    n_rc, c_rc = _agg("kind='recall'")
+    td_gw = con.execute("SELECT COUNT(*) n FROM injections WHERE kind='gw' AND at>=date('now')").fetchone()["n"]
+    td_rc = con.execute("SELECT COUNT(*) n FROM injections WHERE kind='recall' AND at>=date('now')").fetchone()["n"]
+    return {"items": items, "kind": kind or "all",
+            "total": n_all, "sum_chars": c_all,
+            "avg_chars": int(c_all / n_all) if n_all else 0,
+            "gw": {"n": n_gw, "chars": c_gw, "avg": int(c_gw / n_gw) if n_gw else 0, "today": td_gw},
+            "recall_api": {"n": n_rc, "chars": c_rc, "avg": int(c_rc / n_rc) if n_rc else 0, "today": td_rc},
+            "today": td_gw}
 
 
 
@@ -580,7 +598,14 @@ class Handler(BaseHTTPRequestHandler):
                 supersedes = one("select count(*) from cards where supersedes is not null")
                 heat = con.execute("select avg(heat) from cards where status='active'").fetchone()[0] or 0.0
                 never = one("select count(*) from cards where status='active' and id not in (select card_id from card_recall)")
-                inj_n, inj_c = con.execute("select count(*), coalesce(avg(chars),0) from injections where at>=?", (since,)).fetchone()
+                # 口径：只有 kind='gw' 是真正拼进 prompt 的注入块；
+                # kind='recall' 是检索 API 返回给客户端的记忆正文量，不是注入，单独统计。
+                inj_n, inj_c = con.execute(
+                    "select count(*), coalesce(avg(chars),0) from injections where at>=? and kind='gw'",
+                    (since,)).fetchone()
+                rec_api_n, rec_api_c = con.execute(
+                    "select count(*), coalesce(avg(chars),0) from injections where at>=? and kind='recall'",
+                    (since,)).fetchone()
                 rec_n = one("select count(*) from card_recall where at>=?", (since,))
                 new_cards = one("select count(*) from cards where created_at>=?", (since,))
                 new_spans = one("select count(*) from spans where created_at>=?", (since,))
@@ -625,7 +650,9 @@ class Handler(BaseHTTPRequestHandler):
                 "spans": spans, "vectors": vectors, "supersedes": supersedes,
                 "heat": round(float(heat), 4), "never": never, "covered_spans": seen,
                 "pending_learn": pending_learn,
-                "today": {"inject": inj_n, "inject_chars": round(float(inj_c), 1), "recall": rec_n,
+                "today": {"inject": inj_n, "inject_chars": round(float(inj_c), 1),
+                          "recall_api": rec_api_n, "recall_api_chars": round(float(rec_api_c), 1),
+                          "recall": rec_n,
                           "new_cards": new_cards, "new_spans": new_spans},
                 "by_kind": [[k or "", v] for k, v in by_kind],
                 "by_owner": [[k or "", v] for k, v in by_owner],

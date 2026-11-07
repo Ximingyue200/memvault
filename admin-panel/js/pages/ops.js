@@ -72,7 +72,7 @@ export default {
       </div></div>
 
       <div class="stat-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px">
-        <div class="card"><div class="faint text-xs">今日注入</div><div style="font-size:26px;font-weight:600">${t.inject ?? 0}</div><div class="faint text-xs">${(t.inject_chars || 0).toFixed ? t.inject_chars.toFixed(0) : t.inject_chars} 字符</div></div>
+        <div class="card"><div class="faint text-xs">今日注入</div><div style="font-size:26px;font-weight:600">${t.inject ?? 0}</div><div class="faint text-xs">平均 ${(t.inject_chars || 0).toFixed ? t.inject_chars.toFixed(0) : t.inject_chars} 字/次${t.recall_api ? " · 检索接口 " + t.recall_api + " 次" : ""}</div></div>
         <div class="card"><div class="faint text-xs">今日检索</div><div style="font-size:26px;font-weight:600">${t.recall ?? 0}</div><div class="faint text-xs">次</div></div>
         <div class="card"><div class="faint text-xs">今日新卡</div><div style="font-size:26px;font-weight:600">${t.new_cards ?? 0}</div><div class="faint text-xs">待学 ${ov.pending_learn ?? 0}</div></div>
         <div class="card"><div class="faint text-xs">库大小</div><div style="font-size:26px;font-weight:600">${ov.db_mb ?? "-"}</div><div class="faint text-xs">MB</div></div>

@@ -41,7 +41,7 @@ export default {
 
       <div class="grid grid-4 mb16">
         ${statCard({ label: '📥 累计注入', value: (d.total || 0).toLocaleString(), cls: 'accent', sub: '次' })}
-        ${statCard({ label: '📝 平均字数', value: (d.avg_chars || 0).toLocaleString(), cls: 'gold', sub: `≈ ${avgTok.toLocaleString()} token（含老数据）` })}
+        ${statCard({ label: '📝 平均注入字数', value: ((d.gw && d.gw.avg) || 0).toLocaleString(), cls: 'gold', sub: `≈ ${Math.round(((d.gw && d.gw.avg) || 0) / TOK).toLocaleString()} token/次（仅网关注入）` })}
         ${statCard({ label: '🧩 平均卡片', value: d.avg_cards || 0, sub: '张 / 次' })}
         ${statCard({ label: '📌 固定内容', value: ((fixed['画像'] || 0) + (fixed['自我笔记'] || 0)).toLocaleString(), cls: 'purple', sub: `画像 ${fixed['画像'] || 0} · 笔记 ${fixed['自我笔记'] || 0}` })}
       </div>
