@@ -8,6 +8,29 @@
 
 ---
 
+## v2.2 — 踩坑台账（2026-11-07）
+
+把「踩过的坑」当一类特殊卡片存进库：报错串做 `topic`（归一化后当检索签名），现象/修法/范围做正文。目标是下次撞同一个错时，它自己跳出来。
+
+### 新增
+
+- `memvault/pitfall.py` —— 归一化签名（时间/IP:端口/路径/十六进制/数字）、`scan()`、`search()`（精确 + 语义兜底 0.55）、`add()` 三道闸
+- `pitfall_add`（MCP 第 9 个工具）—— 任何 agent 都能记坑：没有修法直接拒；修法里认得出命令 → `active`，认不出 → `proposal`；同一签名（宽松键，路径尾巴归一并）只加 `hits`，不新建卡
+- 网关 `pitfall_block(q)` —— 请求里出现「报错/失败/起不来/command not found/ECONN/Traceback」等特征时，自动检索坑库并插在记忆块之后（≤2 条 ≤700 字）；日志 `pitfall block NB (N hit)`
+- `POST /api/pitfall/ingest` —— 批量入库接口（去重、造 span 证据、补向量）
+- `scripts/collectors/pitsync.js` —— 从会话里捞 `tool/result.isError=true` 并与随后的修复命令配对；**默认关闭**（配错的修法比没有更糟）
+- `cards` 新增 `hits`、`last_seen` 两列（迁移幂等）
+
+### 修复
+
+- `card_evidence.created_at` 是 NOT NULL，追加证据时漏填 → `IntegrityError`
+- 去重改用宽松键（`/x` 与 `/y` 视为同一条），老卡 `topic` 保持不变
+- MCP 的「谁在调」从全局 dict 改为 `threading.local()` —— 并发时原来会把写入者记成别人
+
+### 数据
+
+- 删掉 20 条自动配对失败产生的噪声卡（「修法」其实是下一条无关工具调用），坑卡 38 → 18；删卡同时清 `cards_fts` / `vectors` / `card_evidence`，`integrity ok`、三表守恒
+
 ## v2.0 — 网关版（2026-11-05）
 
 从「离线导入 + 检索」升级成「网关 + 注入 + 生成」的完整链路。
