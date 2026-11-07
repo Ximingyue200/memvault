@@ -32,12 +32,20 @@ Agent 客户端各记各的，换个模型就失忆，换个工具就重来。Me
 | Token 记账 | 拦 `urlopen` 记录每次调用的 in/out/缓存与花费，按任务 + key 聚合 |
 | 分任务路由 | 提炼 / 梦境 / 摘要可以各用一套 key、模型、上游 |
 | 无注入入口 | 同一进程再开一个端口，跳过全部记忆拼装，方便对比与排障 |
+| Agent 身份 | `api_tokens` 表 + `mvtoken`；token 名就是 agent 名，服务端反查，队列里的身份不可伪造 |
+| 写入暂存队列 | `retain` 先进 `retain_queue`，攒够 5 条 / 1500 字再统一抽取、判重、合并，避免碎片成卡 |
+| 跨 agent 可见 | `pending` 看别人写了什么；`recall` 同时返回 `pending_hits`，没出库的也能被问到 |
+| 并发安全 | 进程内锁 + 跨进程 `flock` + 行级原子领取，MCP 与定时器同时提炼也只出一张卡 |
 
 ## 界面
 
-仓库里有两套界面，都不需要构建步骤。
+只有一套界面：`:4180/admin` 的 **MemVault 管理面板**（源码在 `admin-panel/`）。
+原生 ES module + 一个 CSS，没有构建步骤。
 
-### 1. Kiwi-Mem 管理面板（`admin-panel/`）
+记忆库自己的 `:4174` 只留 API 与 `/admin/cradle/*` 代理，旧页面一律 302 到面板 ——
+一个入口、一份实现，不做两套半成品。
+
+### MemVault 管理面板（`admin-panel/`）
 
 原生 ES module + 一个 CSS，双击 `index.html` 之外不需要任何工具链。侧栏按**「人在做什么」**分组，而不是按表结构分组，并且可以整列收起：
 
@@ -55,10 +63,6 @@ Agent 客户端各记各的，换个模型就失忆，换个工具就重来。Me
 
 - **每页顶部一条讲解**（`LEDES`）：先说「这页是干什么的、什么时候该来」，再给控件。参数页甚至给默认值对照，避免「不知道该填什么」。
 - **没接线的页不许假装能用**：`app.js` 的 `WIRED` 白名单决定哪些页真渲染，其余只显示一句「这页还没接后端」，而不是给你一堆点了没反应的按钮。
-
-### 2. 深色单页面板（`memvault/webui.html`）
-
-28 KB 单文件、零依赖，给「只想快速看一眼」的场景：概览（KPI + 今日注入/检索 + 日报）、检索、卡片（筛选/排序/分页 + 详情抽屉：属性、证据原文、命中记录、取代关系、批准/拒绝/固定）、待审、时间线、图谱（力导向，按度数取种子节点避免「有节点没边」）、设置（含网关环境参数，可写）。
 
 ## 架构
 
@@ -102,7 +106,11 @@ python3 -m memvault.gateway               # 网关：:4180 / 无注入 :4182
 python3 -m memvault.mcp_server            # MCP：:4181
 ```
 
-首次启动会建表并灌默认设置；打开 `http://127.0.0.1:4174` 就是面板。
+首次启动会建表并灌默认设置。
+
+嫌上面麻烦就直接 `./deploy.sh`：它把 `MEMVAULT_DB` 指到 `./data`、起三个进程、
+打印四个入口，`./deploy.sh stop` 收工。默认 LLM 走一个免 key 的演示端点，
+抽不出卡时会用本地规则兜底，够你把界面点一遍。要真用就换成自己的模型（见 `docs/DEPLOY.md`）。
 
 ### 客户端怎么接
 
@@ -117,10 +125,24 @@ export OPENAI_API_KEY=any
 {"mcpServers": {"memvault": {"url": "http://127.0.0.1:4181/mcp", "transport": "streamable_http"}}}
 ```
 
+四个入口，各管一件事：
+
+| 入口 | 用途 |
+|---|---|
+| `:4180/v1` | 自动注入记忆的 OpenAI 兼容口（对话走这里） |
+| `:4182/v1` | 同一进程、**不注入**的纯净口，用来对比或排障 |
+| `:4181/mcp` | MCP：`recall` / `retain` / `stats` / `report` / `pending` / `queue_stats` / `flush` |
+| `:4174` | 记忆库自己的 HTTP API（面板经由 `/admin/cradle/*` 调用） |
+
+> 建过 token 之后，`/v1/*`（4180、4182）与 `/mcp` 都要带 `Authorization: Bearer <token>`。
+> OpenAI 兼容客户端里把它填进 `api_key` 即可；MCP 客户端填在 header。
+> 还没建 token 时表为空，一律放行，方便首次跑起来。
+
 ## 目录
 
 ```
 memvault/          核心包（store / search / heat / extract / gateway / mcp_server / server …）
+                  新增：initdb（空库建表）/ auth（token）/ qflush（暂存队列）/ demoextract（无 key 兜底）
 admin-panel/       管理面板（原生 ES module，无构建步骤）
 docs/              架构说明与已知问题
 cron_job.py        定时任务入口（collect / learn / dream / focus / soften / supersede）
