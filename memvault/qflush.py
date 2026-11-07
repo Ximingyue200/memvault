@@ -18,7 +18,7 @@ import time
 
 QMIN = int(os.environ.get("MEMVAULT_Q_MIN", "5"))
 QCHARS = int(os.environ.get("MEMVAULT_Q_CHARS", "1500"))
-QAGE = int(os.environ.get("MEMVAULT_Q_AGE_MIN", "30"))
+QAGE = int(os.environ.get("MEMVAULT_Q_AGE_MIN", "0"))   # 0 = 不按时间触发
 QCAP = int(os.environ.get("MEMVAULT_Q_CAP", "50"))
 BATCH = int(os.environ.get("MEMVAULT_Q_BATCH", "20"))
 SIM_DUP = float(os.environ.get("MEMVAULT_Q_SIM_DUP", "0.93"))
@@ -117,7 +117,7 @@ def should_flush(con, force=False):
         return True, "count(%d)" % d["pending"]
     if d["chars"] >= QCHARS:
         return True, "chars(%d)" % d["chars"]
-    if _age_min(d["oldest"]) >= QAGE:
+    if QAGE > 0 and _age_min(d["oldest"]) >= QAGE:
         return True, "age(%.0fm)" % _age_min(d["oldest"])
     return False, "below-threshold"
 

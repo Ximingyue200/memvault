@@ -171,7 +171,7 @@ mvtoken disable eta
 |---|---|---|
 | `MEMVAULT_Q_MIN` | 5 | 条数到了就刷 |
 | `MEMVAULT_Q_CHARS` | 1500 | 字数到了就刷 |
-| `MEMVAULT_Q_AGE_MIN` | 30 | 最老一条超过 30 分钟就刷 |
+| `MEMVAULT_Q_AGE_MIN` | 0 | 按时间触发；**0 = 关闭**，只按条数/字数刷 |
 | `MEMVAULT_Q_CAP` | 50 | 硬上限，必刷 |
 | `MEMVAULT_Q_SIM_DUP` | 0.93 | 余弦 ≥ 此值 → 判重跳过 |
 | `MEMVAULT_Q_SIM_NEW` | 0.80 | 0.80–0.93 → 新建并 supersede 旧卡 |
