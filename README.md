@@ -1,9 +1,8 @@
 # MemVault — 本地优先的 Agent 记忆中间件
 
 
-> ⚠️ **默认用的是演示 API**（`text.pollinations.ai`，免费、无需 key、但慢且会限流）。
-> `git clone` 完可以直接跑起来验证流程；**正式使用请换成自己的 OpenAI 兼容服务**，
-> 两分钟：见 [docs/DEPLOY.md](docs/DEPLOY.md#3-换成自己的-api重要)。面板首次打开也会有这条提示。
+> ⚠️ 默认 LLM 指向免费的 `text.pollinations.ai`（无需 key、慢、会限流），
+> 只够验证流程。换自己的 API：见 [docs/DEPLOY.md](docs/DEPLOY.md#3-换掉演示端点)。
 
 一个跑在自己机器上的记忆层：**网关**接管所有模型的对话流量，自动检索、注入、记账；**MCP 服务端**给只能用 MCP 的 agent 提供同一套记忆；**卡片 + 证据**保证每条记忆都能追回到原文；**面板**让人能看见、能改、能审。
 

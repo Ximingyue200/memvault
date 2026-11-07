@@ -1,153 +1,119 @@
 # 部署
 
-三种人看这篇：只想跑起来看一眼的、打算长期用的、要接到自己 agent 上的。按需跳。
+面向能自己管机器的人，只写**不写就会踩**的部分。
 
 ---
 
-## 0. 先说清楚：默认用的是"演示 API"
+## 默认用的是演示端点（知道就行）
 
-仓库里 `llm.base` 的默认值指向 **`https://text.pollinations.ai/openai`** —— 一个免费的公共
-OpenAI 兼容端点。它不需要 key，所以 `git clone` 完就能直接抽卡、能跑 dream，不用先注册任何账号。
+`llm.base` 默认 `https://text.pollinations.ai/openai` —— 免费、无需 key、慢、会 402 限流。
+它只保证流程能跑通，不保证质量。换自己的 API 见第 3 节。
 
-**但它有三个问题**：慢（单次 1.5–13 秒）、会限流（并发或高频直接 402 `FREE_LIMIT`）、随时可能
-挂掉或改规则。**只适合验证流程，不适合日常用。** 正式用请换成自己的上游 —— 见第 3 节，两分钟的事。
+演示模式下的实际行为：
 
-面板第一次打开时底部会有一条黄色的提示，点「知道了」就不再出现（存在浏览器 localStorage）。
-
-### 演示模式下会发生什么
-
-- **对话/问答**：能正常跑，就是慢。
-- **抽卡（learn）**：免费端点被限流（402）或返回空时，会自动退回一个本地规则抽取器
-  （`memvault/demoextract.py`，按句切、留「有事实感」的句子、归成 note 卡）。所以你能亲眼看到
-  卡片进库、检索能命中 —— 但那不是模型在理解，只是让流程能走通。
-- **做梦 / 编年史 / 画像**：**需要真模型**。演示端点写不出连贯的长文，这部分基本是空的。
-- 单段原文 **少于 200 字不抽卡**（`learn.MIN_CHARS`），所以别拿一句话测试。
-- 没有向量服务时：卡片照常入库，只是标记「缺向量」，检索退化成 BM25 + LIKE。
-  日志里会出现 `[warn] 向量补写失败（不影响入库）`，不影响游标推进。
+| 环节 | 表现 |
+|---|---|
+| 对话（网关 4180） | 能跑，延迟 1.5–13s |
+| 抽卡（learn） | 端点限流或返回空时，退回本地规则抽取（`demoextract.py`），能出 note 卡，但不是模型理解 |
+| 做梦 / 编年史 / 画像 | **写不出来**，需要真模型 |
+| 向量 | 没配 embedding 就退化成 BM25 + LIKE，卡片照常入库，只是日志有 `[warn] 向量补写失败` |
+| 抽卡门槛 | 单段原文 < 200 字（`learn.MIN_CHARS`）直接跳过 |
 
 ---
 
-## 1. 最快跑起来（3 步）
+## 1. 跑起来
 
 ```bash
 git clone https://github.com/Ximingyue200/memvault.git && cd memvault
-pip install -r requirements.txt      # 只有 numpy；不装也能跑，只是向量检索退化
-./deploy.sh
+pip install -r requirements.txt     # 只有 numpy
+./deploy.sh                         # 建 ./data、起三个进程、打印端点
+./deploy.sh stop
 ```
 
-`deploy.sh` 做的事：建 `./data/`、把 `MEMVAULT_DB` / `GW_DB` 指过去、起三个进程、打印地址。
+| 入口 | 地址 |
+|---|---|
+| 面板 | `:4174/admin/` |
+| 网关（带注入） | `:4180/v1` |
+| 网关（不注入） | `:4182/v1` |
+| MCP | `:4181/mcp` |
 
-起来之后：
+空库首启自建 37 张表 + 默认设置，不需要迁移脚本。
 
-| 入口 | 地址 | 说明 |
-|---|---|---|
-| 面板 | http://127.0.0.1:4174/admin/ | 记忆库、卡片、待审、定时任务、配置 |
-| 网关 | http://127.0.0.1:4180/v1 | OpenAI 兼容，**带**记忆注入 |
-| 纯净入口 | http://127.0.0.1:4182/v1 | 同样转发，**不带**注入（对比/排错用） |
-| MCP | http://127.0.0.1:4181/mcp | `recall / retain / stats / report` 四个工具 |
-
-停：`./deploy.sh stop`
-
-> 首次启动会自动建表（37 张）+ 灌默认设置，不需要手动跑迁移。
+`deploy.sh` 导出的是 `MEMVAULT_DB` / `GW_DB` / `MEMVAULT_LLM_*`。手工起进程时这几个变量得自己给 ——
+代码里的默认库路径是作者机器上的 `/opt/memvault/data/memvault.db`，不设就是 `unable to open database file`。
 
 ---
 
-## 2. 接你的 agent
+## 2. 接 agent
 
-### 2.1 走网关（自动记忆，推荐）
-
-任何支持自定义 `base_url` 的客户端：
+**网关（自动注入）**
 
 ```
-BASE_URL = http://<host>:4180/v1
-API_KEY  = 任意非空字符串（网关自己不校验）
-MODEL    = openai            # 或你在 settings 里配的模型名
+base_url = http://<host>:4180/v1
+api_key  = 任意非空（网关不校验）
+model    = settings 里配的那个
 ```
 
-它会在每轮把「常驻层 + 检索到的事实卡」拼进 system，回答完把这一轮写进 buffer，凌晨统一落库。
-不想要注入就填 `:4182/v1`，行为跟直连上游一样。
+每轮把常驻层 + 检索到的事实卡拼进 system；回答完写 buffer，凌晨统一落库。要对比直连就换 `:4182/v1`。
 
-### 2.2 走 MCP（只能挂 MCP 的 agent）
+**MCP（只能挂 MCP 的 agent）**
 
 ```
-URL        = http://<host>:4181/mcp
-transport  = streamable_http
+url = http://<host>:4181/mcp
+transport = streamable_http
 ```
 
-四个工具：`recall(query, topk, min_score)` / `retain(text, context)` / `stats()` / `report()`。
-**agent 写入默认是 proposal**，要在面板「待审」里批准才进检索 —— 这是为了防止多 agent 互相污染。
+`recall(query, topk, min_score)` / `retain(text, context)` / `stats()` / `report()`。
+agent 写入默认 `proposal`，批准后才进检索（防多 agent 互相污染）。
 
 ---
 
-## 3. 换成自己的 API（重要）
+## 3. 换掉演示端点
 
-默认演示端点只够验证。换成本地或云端任选，只要 OpenAI 兼容：
+环境变量（推荐）或面板「记忆库参数」都行，改完下次调用生效：
 
-**DeepSeek（便宜、中文好）**
 ```bash
-export MEMVAULT_LLM_URL=https://api.deepseek.com
-export MEMVAULT_LLM_MODEL=deepseek-flash        # 或 deepseek-reasoner
-export MEMVAULT_LLM_KEY=sk-你的key
+export MEMVAULT_LLM_URL=https://api.deepseek.com          # Ollama: http://127.0.0.1:11434/v1
+export MEMVAULT_LLM_MODEL=deepseek-flash
+export MEMVAULT_LLM_KEY=sk-...
 ./deploy.sh
 ```
 
-**硅基流动 / OpenAI / 自建 vLLM / Ollama** 同理，改 `MEMVAULT_LLM_URL` + `MODEL` + `KEY` 即可
-（Ollama 用 `http://127.0.0.1:11434/v1`，key 填 `ollama`）。
+面板里还能给 learn / dream / summary 分别指定模型和 key（「分任务接入」），提炼走便宜的、做梦走贵的。
 
-也可以不改环境变量，直接在面板改：**记忆库参数 → 全局 LLM 地址 / 全局 LLM 模型**，以及
-「分任务接入」里给 learn / dream / summary 分别指定不同的 key 和模型（省钱用：提炼走便宜的，
-做梦走贵的）。改完不用重启，下次调用生效。
-
-### 向量服务（可选）
-
-不配也能用：检索会退化成纯 BM25 + LIKE 兜底，短中文查询靠 `like` 也能命中，只是召回粗一点。
-要向量检索就起一个 bge-m3 的 OpenAI 兼容 embeddings 服务：
+**向量（可选）**：起一个 bge-m3 的 OpenAI 兼容 embeddings 服务
 
 ```bash
 export MEMVAULT_EMBED_URL=http://127.0.0.1:8081/v1/embeddings
-export MEMVAULT_EMBED_MODEL=bge-m3
+export MEMVAULT_EMBED_MODEL=bge-m3          # 维度必须与库一致（默认 1024）
 ```
 
-维度要跟库里一致（默认 1024）。换维度会让旧向量作废。
-
 ---
 
-## 4. 定时任务（自动生长）
+## 4. 定时任务
 
-不装定时器也能用 —— 只是「存进去的东西不会自己变成卡片」。要自动生长，把这几个挂到 cron/systemd：
+不装也能用，只是存进去的东西不会自己变成卡片。
 
-| 任务 | 建议频率 | 作用 |
+| 任务 | 频率 | 作用 |
 |---|---|---|
-| `python3 -m memvault.collect` | 每 10 分钟 | 把新对话切成 span |
-| `python3 -m memvault.learn` | 每 30 分钟 | span → 事实卡（**花钱的那一步**） |
-| `python3 -m memvault.dream` | 每小时 | 编年史 / 画像 / 自述 |
-| `python3 -m memvault.focus` | 每小时 | 重建「未完成的事」 |
-| `python3 -m memvault.soften` | 每天 | 软化过期的强断言 |
-| `python3 -m memvault.supersede` | 每天 | 处理取代关系 |
+| `python3 -m memvault.collect` | 10 min | 新对话 → span |
+| `python3 -m memvault.learn` | 30 min | span → 事实卡（唯一花钱的一步） |
+| `python3 -m memvault.dream` | 1 h | 编年史 / 画像 / 自述 |
+| `python3 -m memvault.focus` | 1 h | 未完成的事 |
+| `python3 -m memvault.soften` | 每天 | 软化过期断言 |
+| `python3 -m memvault.supersede` | 每天 | 取代关系 |
 | `python3 -m memvault.backup` | 每天 | SQLite 在线备份 |
 
-成本参考：演示端点免费；DeepSeek 下一条 learn 约 ¥0.005–0.01，一天几十条的量级 ¥1 以内。
+DeepSeek 下一条 learn 约 ¥0.005–0.01。
 
 ---
 
-## 5. 常见问题
+## 5. 会遇到的几件事
 
-**起不来，报 `unable to open database file`**
-没设 `MEMVAULT_DB`，代码默认路径是作者机器上的 `/opt/memvault/data/...`。用 `./deploy.sh` 会自动设好，
-手工起的话要自己 export。
+**面板 502 `cradle unreachable`** —— 网关把 `/admin/cradle/*` 代理到 `127.0.0.1:4174`。改了 server 端口就会断，保持默认或同时改代理目标。
 
-**面板打不开 / 接口 502 `cradle unreachable`**
-网关把面板请求代理到 `127.0.0.1:4174`。如果你改了 server 的端口，面板就会 502 —— 保持默认端口，
-或者同时改 `GW_CRADLE_PORT`。
+**搜不到** —— ①无向量服务 + 长中文句子（BM25 切不开中文），配 bge-m3 或把查询压短；②新卡还是 proposal，没批。
 
-**搜不到东西**
-两种原因：①没有向量服务且查询是长中文句子（BM25 切不开中文）—— 配 bge-m3，或把查询压到 5 个字内；
-②新写入的是 proposal，还没批。
+**回答像编的** —— 看完形强度和卡片 `confidence`；卡片详情里能顺着证据回到原始 span。
 
-**回答明显是编的**
-看「完形强度」和卡片的 `confidence`。高完形强度会补全叙事，但每条结论都应该能顺着证据链回到 span，
-在面板卡片详情里能看到原始证据。
-
-**能不能公网开**
-不建议裸奔：面板的 `/admin/config`、`/admin/providers` 没有鉴权（密钥已打码，但拓扑全暴露）。
-真要从外面访问，前面套一层带 Basic Auth 的反代，或者走 SSH 隧道。
+**对外开放** —— `/admin/config`、`/admin/providers` 无鉴权（密钥打码，拓扑可见）。要暴露到公网自己加一层反代鉴权。
