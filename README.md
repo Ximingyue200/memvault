@@ -39,7 +39,8 @@ Agent 客户端各记各的，换个模型就失忆，换个工具就重来。Me
 
 ## 界面
 
-只有一套界面：`:4180/admin` 的 **MemVault 管理面板**（源码在 `admin-panel/`）。
+只有一套界面：**MemVault 管理面板**（源码在 `admin-panel/`）。默认 HTTP 端口就能直接打开：
+`http://<host>/admin`（网关在 80 上跑同一套路由，`:4180/admin` 同样可用）。
 原生 ES module + 一个 CSS，没有构建步骤。
 
 记忆库自己的 `:4174` 只留 API 与 `/admin/cradle/*` 代理，旧页面一律 302 到面板 ——
@@ -132,6 +133,7 @@ export OPENAI_API_KEY=any
 | `:4180/v1` | 自动注入记忆的 OpenAI 兼容口（对话走这里） |
 | `:4182/v1` | 同一进程、**不注入**的纯净口，用来对比或排障 |
 | `:4181/mcp` | MCP：`recall` / `retain` / `stats` / `report` / `pitfall` / `pitfall_add` / `pending` / `queue_stats` / `flush` |
+| `:80` | 与 4180 同进程同路由：`/admin` 面板 + `/v1` 都能走，省掉记端口 |
 | `:4174` | 记忆库自己的 HTTP API（面板经由 `/admin/cradle/*` 调用） |
 
 > 建过 token 之后，`/v1/*`（4180、4182）与 `/mcp` 都要带 `Authorization: Bearer <token>`。
