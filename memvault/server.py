@@ -204,6 +204,22 @@ def _chron_dict(row):
     return d
 
 
+def _llm_base(con):
+    """当前全局 LLM 基地址（默认是演示端点）。"""
+    try:
+        r = con.execute("select v from settings where k='llm.base'").fetchone()
+        if r and str(r[0]).strip():
+            return str(r[0]).strip()
+    except Exception:
+        pass
+    return "https://text.pollinations.ai/openai"
+
+
+def _is_demo_llm(con):
+    """还在用演示端点？面板据此弹一次性提示。"""
+    return "pollinations" in _llm_base(con).lower()
+
+
 def _con():
     return store.connect(DB)
 
@@ -658,6 +674,7 @@ class Handler(BaseHTTPRequestHandler):
                 "by_owner": [[k or "", v] for k, v in by_owner],
                 "db_mb": db_mb, "reports": reports, "report": report[:4000],
                 "backups": backups, "last_backup": last_backup, "balance": balance,
+                "demo_llm": _is_demo_llm(con), "llm_base": _llm_base(con),
             })
 
         if p.path == "/api/settings":

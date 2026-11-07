@@ -27,7 +27,7 @@ except Exception:  # 直接当脚本跑时没有包上下文
         return {}
 
 DB = os.environ.get("MEMVAULT_DB", "/opt/memvault/data/memvault.db")
-API = os.environ.get("MEMVAULT_LLM_API", "https://api.deepseek.com/chat/completions")
+API = os.environ.get("MEMVAULT_LLM_API", "https://text.pollinations.ai/openai")
 KEY = os.environ.get("MEMVAULT_LLM_KEY", "")
 MODEL = os.environ.get("MEMVAULT_LLM_MODEL", "deepseek-flash")
 

@@ -53,5 +53,39 @@
 </div>
 
 <script type="module" src="/admin/js/app.js"></script>
+
+<!-- 演示端点提示（仅在还没换成自己的 API 时出现，可永久关闭） -->
+<div id="mv-demo-bar" style="display:none;position:fixed;left:0;right:0;bottom:0;z-index:9999;
+     background:#3a2d12;border-top:1px solid #6b5320;color:#f0d9a8;font:13px/1.6 system-ui,-apple-system,'Segoe UI',sans-serif;
+     padding:10px 14px;box-shadow:0 -4px 16px rgba(0,0,0,.35)">
+  <b>⚠️ 当前用的是演示 API</b>
+  <span style="opacity:.85">（<code id="mv-demo-base" style="color:#ffd88a">text.pollinations.ai</code> · 免费公共端点，慢、会限流、随时可能不可用）</span>
+  <span style="opacity:.85">正式使用请换成自己的 OpenAI 兼容服务 —— 面板「记忆库参数 → 全局 LLM 地址 / 模型」，或看仓库 <code>docs/DEPLOY.md</code>。</span>
+  <a href="https://github.com/Ximingyue200/memvault/blob/main/docs/DEPLOY.md" target="_blank" rel="noopener"
+     style="color:#ffd88a;margin-left:6px">怎么换 →</a>
+  <button id="mv-demo-close" style="float:right;background:transparent;border:1px solid #6b5320;color:#f0d9a8;
+     border-radius:6px;padding:2px 10px;cursor:pointer;font-size:12px">知道了</button>
+</div>
+<script>
+(function(){
+  try { if (localStorage.getItem("mv-demo-dismiss") === "1") return; } catch(e) {}
+  fetch("/admin/cradle/api/overview", {credentials:"same-origin"})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (!d || !d.demo_llm) return;
+      var bar=document.getElementById("mv-demo-bar");
+      var base=document.getElementById("mv-demo-base");
+      if (base && d.llm_base) base.textContent = String(d.llm_base).replace(/^https?:\/\//,"");
+      bar.style.display="block";
+      document.body.style.paddingBottom="64px";
+      document.getElementById("mv-demo-close").onclick=function(){
+        bar.style.display="none";
+        document.body.style.paddingBottom="";
+        try { localStorage.setItem("mv-demo-dismiss","1"); } catch(e) {}
+      };
+    })
+    .catch(function(){});
+})();
+</script>
 </body>
 </html>

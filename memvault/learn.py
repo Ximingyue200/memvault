@@ -31,12 +31,35 @@ def _set_cursor(con, v):
     con.commit()
 
 
+def _llm_url_of(base):
+    """把面板里填的基地址拼成 chat/completions 端点。
+
+    演示端点（pollinations）本身就是完整端点，不能再拼 /v1/chat/completions。
+    """
+    b = (base or "").strip().rstrip("/")
+    if not b:
+        return ""
+    if b.endswith("/chat/completions"):
+        return b
+    if "pollinations" in b:
+        return b
+    return b + "/v1/chat/completions"
+
+
 def _env_first(con):
-    """必须在 import extract 之前调用。"""
-    os.environ["MEMVAULT_LLM_KEY"] = _cfg(con, "dream.api_key")
-    os.environ["MEMVAULT_LLM_MODEL"] = _cfg(con, "dream.model", "deepseek-flash")
-    base = _cfg(con, "dream.api_base", "https://api.deepseek.com").rstrip("/")
-    os.environ["MEMVAULT_LLM_URL"] = base + "/v1/chat/completions"
+    """必须在 import extract 之前调用。
+
+    只覆盖「库里真的配了」的项；没配就交给 extract 自己的默认值（演示端点）。
+    """
+    key = _cfg(con, "dream.api_key")
+    if key:
+        os.environ["MEMVAULT_LLM_KEY"] = key
+    model = _cfg(con, "llm.model") or _cfg(con, "dream.model")
+    if model:
+        os.environ["MEMVAULT_LLM_MODEL"] = model
+    url = _llm_url_of(_cfg(con, "llm.base") or _cfg(con, "dream.api_base"))
+    if url:
+        os.environ["MEMVAULT_LLM_URL"] = url
 
 
 
@@ -124,7 +147,9 @@ def learn(con, limit=120, dry=False, window=WINDOW, max_cards=4):
                     store.put_vector(con, _cid, _v)
                 con.commit()
             except Exception as e:
-                last_err = last_err or ("embed:%s" % str(e)[:80])
+                # 向量服务没起不该卡住游标：卡片已经入库了，缺向量只是检索退化。
+                # 用一条 warn 记一次，别让 learn 每次重跑同一批 span。
+                print("[warn] 向量补写失败（不影响入库）：%s" % str(e)[:80], flush=True)
             _vecq.clear()
 
     batch = []
@@ -155,7 +180,7 @@ def learn(con, limit=120, dry=False, window=WINDOW, max_cards=4):
 
 
 if __name__ == "__main__":
-    db = sys.argv[1] if len(sys.argv) > 1 else "data/memvault.db"
+    db = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("MEMVAULT_DB") or "data/memvault.db"
     dry = "--dry" in sys.argv
     con = sqlite3.connect(db)
     con.row_factory = sqlite3.Row

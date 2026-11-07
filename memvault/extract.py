@@ -16,9 +16,10 @@ except Exception:  # 直接当脚本跑时没有包上下文
     def _effort_kw(task=None):
         return {}
 
-LLM_URL = os.environ.get("MEMVAULT_LLM_URL", "https://api.deepseek.com/v1/chat/completions")
-LLM_MODEL = os.environ.get("MEMVAULT_LLM_MODEL", "deepseek-chat")
+LLM_URL = os.environ.get("MEMVAULT_LLM_URL", "https://text.pollinations.ai/openai")
+LLM_MODEL = os.environ.get("MEMVAULT_LLM_MODEL", "openai")
 LLM_KEY = os.environ.get("MEMVAULT_LLM_KEY", "")
+DEMO_MODE = ("pollinations" in LLM_URL) or not LLM_KEY  # 免费/无 key：可用本地兜底
 
 PROMPT = """从下面的对话里提取值得三个月后还记得的内容。
 
@@ -85,12 +86,27 @@ def _post(payload, timeout=300):
         return json.load(resp)
 
 
+def _fallback(text, max_cards=8):
+    """演示端点限流/返回空时，用本地规则抽两条，保证流程走得通。"""
+    if not DEMO_MODE:
+        return []
+    try:
+        from .demoextract import split_cards
+        cards = split_cards(text, max_cards)
+        if cards:
+            print("[demo] 上游没给出可用结果，已用本地规则抽 %d 条（仅演示）" % len(cards), flush=True)
+        return cards
+    except Exception:
+        return []
+
+
 def extract(text, max_cards=8, max_tokens=8000):
     text = (text or "").strip()
     if not text:
         return []
     if not LLM_KEY:
-        raise RuntimeError("MEMVAULT_LLM_KEY not set")
+        # 默认的演示端点不需要 key；换成需要鉴权的上游时请设 MEMVAULT_LLM_KEY
+        print("[warn] MEMVAULT_LLM_KEY 未设置：演示端点可直连，其他上游会 401", flush=True)
     text = text[:24000]
     d = _post({
         "model": LLM_MODEL,
@@ -106,11 +122,11 @@ def extract(text, max_cards=8, max_tokens=8000):
     if not m and rc:
         m = re.search(r"\[[\s\S]*\]", rc, re.S)
     if not m:
-        return []
+        return _fallback(text, max_cards)
     try:
         items = json.loads(m.group(0))
     except Exception:
-        return []
+        return _fallback(text, max_cards)
     if not isinstance(items, list):
         return []
     cards = []
@@ -124,4 +140,4 @@ def extract(text, max_cards=8, max_tokens=8000):
             "kind": it.get("type") or it.get("kind"),
             "topic": it.get("topic"),
         })
-    return cards
+    return cards or _fallback(text, max_cards)

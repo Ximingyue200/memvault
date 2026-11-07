@@ -10,6 +10,7 @@ msg_id 是**全局单调编号**：cradle 历史导入占了 1..54402，新对�
 """
 import hashlib
 import sqlite3
+import os
 import sys
 import time
 
@@ -144,7 +145,7 @@ def collect(con, limit=500, dry=False):
 
 
 if __name__ == "__main__":
-    db = sys.argv[1] if len(sys.argv) > 1 else "data/memvault.db"
+    db = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("MEMVAULT_DB") or "data/memvault.db"
     dry = "--dry" in sys.argv
     con = sqlite3.connect(db)
     con.row_factory = sqlite3.Row
