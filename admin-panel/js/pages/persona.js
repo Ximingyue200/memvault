@@ -79,7 +79,7 @@ export default {
       <div class="card mt16">
         <div class="section-title">${i === null ? '新建人设' : '编辑人设'}</div>
         <div class="mt8"><label class="lbl">名字</label>
-          <input class="input" id="pe-name" value="${escHtml(p.name || '')}" placeholder="如：大肥鱼 / 老师 / 审稿人"></div>
+          <input class="input" id="pe-name" value="${escHtml(p.name || '')}" placeholder="如：助手 / 老师 / 审稿人"></div>
         <div class="mt8"><label class="lbl">一句话说明</label>
           <input class="input" id="pe-desc" value="${escHtml(p.desc || '')}" placeholder="这套人设什么时候用"></div>
         <div class="mt8"><label class="lbl">人设正文（会放在 system prompt 最前面）</label>
