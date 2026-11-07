@@ -895,6 +895,28 @@ def _setting_effort():
 _RESP_RC = {}
 _RESP_RC_MAX = 800
 
+# previous_response_id 的会话缓存：rid -> {"messages": [...], "at": ts}
+# Eta 这类客户端每轮重发全量，带这个字段是为了让「只发增量」的客户端也能续上。
+_RESP_HIST = {}
+_RESP_HIST_MAX = 200
+
+
+def _resp_remember(rid, msgs):
+    try:
+        _RESP_HIST[rid] = {"messages": list(msgs), "at": time.time()}
+        while len(_RESP_HIST) > _RESP_HIST_MAX:
+            _RESP_HIST.pop(next(iter(_RESP_HIST)))
+    except Exception:
+        pass
+
+
+def _resp_history(rid):
+    try:
+        v = _RESP_HIST.get(str(rid or ""))
+        return v["messages"] if v else []
+    except Exception:
+        return []
+
 
 def _rc_put(call_ids, rc):
     """记住每个 tool_call 对应的 reasoning_content，供下一轮原样回传。"""
@@ -3052,6 +3074,11 @@ class H(BaseHTTPRequestHandler):
         except Exception:
             return self._json(400, {"error": {"message": "invalid json"}})
         msgs = self._resp_msgs(body)
+        _prev = str(body.get("previous_response_id") or "").strip()
+        if _prev:
+            _hist = _resp_history(_prev)
+            if _hist:
+                msgs = list(_hist) + list(msgs)
         if not msgs:
             return self._json(400, {"error": {"message": "input required"}})
 
@@ -3142,9 +3169,24 @@ class H(BaseHTTPRequestHandler):
                             "content": [{"type": "output_text", "text": text, "annotations": []}]})
             _ledger_usage("agent-resp-raw" if getattr(self.server, "noinject", False) else "agent-resp",
                           model, usage, UP_KEY)
+            try:
+                # 非流式下没有 calls 变量（那是流式分支的槽位表），要从上游 msg 里取
+                _am = {"role": "assistant", "content": text or ""}
+                if msg.get("tool_calls"):
+                    _am["tool_calls"] = [
+                        {"id": c.get("id"), "type": "function",
+                         "function": {"name": (c.get("function") or {}).get("name"),
+                                      "arguments": (c.get("function") or {}).get("arguments") or "{}"}}
+                        for c in msg["tool_calls"]]
+                    # 思考模式下带 tool_calls 的 assistant 必须回传 reasoning_content（空串可接受）
+                    _am["reasoning_content"] = rc or ""
+                _resp_remember(rid, msgs + [_am])
+            except Exception as e:
+                log("responses remember fail: %s" % e)
             return self._json(200, {
                 "id": rid, "object": "response", "created_at": int(time.time()),
                 "status": "completed", "model": model,
+                "previous_response_id": _prev or None,
                 "output": out, "output_text": text,
                 "usage": {"input_tokens": usage.get("prompt_tokens", 0),
                           "output_tokens": usage.get("completion_tokens", 0),
@@ -3183,7 +3225,8 @@ class H(BaseHTTPRequestHandler):
 
         item_id = "msg_" + uuid.uuid4().hex[:20]
         base = {"id": rid, "object": "response", "created_at": int(time.time()),
-                "model": model, "status": "in_progress"}
+                "model": model, "status": "in_progress",
+                "previous_response_id": _prev or None}
         text_parts = []
         rc_parts = []
         calls = {}
@@ -3304,6 +3347,16 @@ class H(BaseHTTPRequestHandler):
                                   "id": slot["id"] or ("fc_" + uuid.uuid4().hex[:20]),
                                   "call_id": slot["id"], "name": slot["name"],
                                   "arguments": slot["args"], "status": "completed"})
+            try:
+                _am = {"role": "assistant", "content": "".join(text_parts) or ""}
+                if calls:
+                    _am["tool_calls"] = [
+                        {"id": k, "type": "function",
+                         "function": {"name": v["name"], "arguments": v["args"]}}
+                        for k, v in calls.items()]
+                _resp_remember(rid, msgs + [_am])
+            except Exception:
+                pass
             state["n"] += 1
             ev("response.completed", {"type": "response.completed",
                                       "response": dict(base, status="completed",
