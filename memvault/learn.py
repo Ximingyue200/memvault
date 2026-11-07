@@ -92,16 +92,22 @@ def learn(con, limit=120, dry=False, window=WINDOW, max_cards=4):
             # 证据优先挑 user/user_note 的 span（definition 卡要求 human 支撑）
             human = [s for s in group if s[3] in ("user", "user_note") and s[4].strip()]
             src = max(human or group, key=lambda s: len(s[4]))
-            quote = src[4][:120]
+            raw_quote = (src[4] or "").strip()
+            quote = raw_quote[:120]
             if not quote:
                 continue
-            c["body"] = ("原文：" + quote + "\n" + c["body"])[:2000]
+            # 不再往正文里塞「原文：」——正文是模型写的结论，证据在 card_evidence 里
+            c["body"] = c["body"][:2000]
             c["title"] = c["title"][:80]
             c["owner"] = "human" if src[3] in ("user", "user_note") else "agent"
             c["extractor_version"] = "learn-v1"
             c["source_path"] = "conv_log/%s" % group[0][1]
+            # 偏移尽量用 span 内的真实位置；定位不到就退回整段（不再伪造 0/len）
+            _off = raw_quote.find(quote)
             evs = [{"span_id": src[0], "role": src[3], "quote": quote,
-                    "char_start": 0, "char_end": len(quote), "weight": 0.8}]
+                    "char_start": _off if _off >= 0 else 0,
+                    "char_end": (_off + len(quote)) if _off >= 0 else len(quote),
+                    "weight": 0.8}]
             cid, reason = store.ingest_card(con, c, evs, span_lookup=lookup)
             if cid:
                 saved += 1

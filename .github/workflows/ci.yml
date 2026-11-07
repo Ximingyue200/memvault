@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  python:
+    name: Python 语法与导入
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: 安装最小依赖
+        run: python -m pip install --quiet numpy
+      - name: 编译全部 .py（-b 不写 __pycache__）
+        run: python -m compileall -q -b memvault *.py
+      - name: 导入冒烟
+        run: |
+          python - <<'PY'
+          import importlib
+          mods = ["store", "search", "heat", "schema", "embed",
+                  "gateway", "mcp_server", "effort", "_meter", "server"]
+          for m in mods:
+              importlib.import_module(f"memvault.{m}")
+          print(f"ok: {len(mods)} 个核心模块可导入")
+          PY
+
+  javascript:
+    name: 面板 JS 语法
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: 每个 .js 按 ES module 解析
+        run: |
+          fail=0
+          while IFS= read -r f; do
+            tmp="$(mktemp --suffix=.mjs)"
+            cp "$f" "$tmp"
+            if ! node --check "$tmp"; then
+              echo "::error file=$f::语法检查未通过"
+              fail=1
+            fi
+            rm -f "$tmp"
+          done < <(find admin-panel memvault -name '*.js' -not -path '*/node_modules/*')
+          exit $fail
+
+  hygiene:
+    name: 仓库卫生（密钥与体积）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 不许提交真实密钥
+        run: |
+          if grep -rInE "sk-[a-fA-F0-9]{24,}|gwk-[a-fA-F0-9]{24,}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|tvly-[a-z]+-[A-Za-z0-9]{20,}" \
+               --include='*.py' --include='*.js' --include='*.md' --include='*.html' . ; then
+            echo "::error::发现疑似真实密钥，请改成环境变量或占位符"
+            exit 1
+          fi
+          echo "未发现密钥"
+      - name: 不许提交大文件
+        run: |
+          big=$(find . -type f -size +2M -not -path './.git/*')
+          if [ -n "$big" ]; then
+            echo "$big"
+            echo "::error::有文件超过 2MB，数据与模型不要进仓库"
+            exit 1
+          fi
+          echo "体积正常"

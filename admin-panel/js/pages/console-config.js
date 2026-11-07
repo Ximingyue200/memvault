@@ -1,4 +1,4 @@
-// ⚙️ 记忆库参数 — 复用 kiwi 的 schema 渲染器，数据走本网关的 /admin/config
+// ⚙️ 记忆库参数 — 复用面板的 schema 渲染器，数据走本网关的 /admin/config
 import { escHtml } from "../api.js";
 import { loadingBlock, toast } from "../ui.js";
 import { loadConfig, renderConfigGroups, wireConfig, ensureModelDatalist } from "../config.js";

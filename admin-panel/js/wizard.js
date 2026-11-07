@@ -66,14 +66,14 @@ function showWizard() {
 // ---------- ① 供应商 ----------
 function renderStep1(mask, state) {
   mask.innerHTML = shell(1, `
-    <p class="wiz-p">kiwi-mem 自己不是 AI——它把你的话转发给你买的 AI 服务。先填上你的<b>中转站或官方 API</b>：</p>
+    <p class="wiz-p">MemVault 自己不是 AI——它把你的话转发给你买的 AI 服务。先填上你的<b>中转站或官方 API</b>：</p>
     <div class="grid grid-2">
       <div class="field"><label>名称</label><input type="text" id="wz-name" placeholder="如：我的 OpenRouter"></div>
       <div class="field"><label>API 格式</label><select id="wz-fmt"><option value="openai">OpenAI 格式（大部分中转站）</option><option value="anthropic">Anthropic 原生</option></select></div>
     </div>
     <div class="field"><label>API 地址</label><input type="text" id="wz-url" class="mono" placeholder="https://openrouter.ai/api/v1"></div>
     <div class="field"><label>API Key</label><input type="password" id="wz-key" placeholder="sk-…"></div>
-    <div class="field-hint">这是<b>中转站</b>的地址和 Key，不是 kiwi-mem 的。保存后会自动测试连接。</div>
+    <div class="field-hint">这是<b>中转站</b>的地址和 Key，不是 MemVault 的。保存后会自动测试连接。</div>
   `, `<span></span><button class="btn btn-primary" data-wiz="save1">保存并测试 →</button>`);
 
   mask.querySelector('[data-wiz="save1"]').addEventListener('click', async (ev) => {
@@ -146,7 +146,7 @@ function renderStep3(mask) {
       <div class="wiz-t-label" style="margin-top:12px">API KEY</div>
       <div class="wiz-t-val">kiwi <span class="wiz-t-hint">（随便填，不能留空）</span></div>
     </div>
-    <div class="banner banner-warn" style="margin:12px 0 0">⚠️ <div><b>最容易填错的地方</b>：这里填的是 <b>kiwi-mem 网关</b>的地址，<b>不是</b>刚才那个中转站的地址。前端连网关，网关连中转站。</div></div>
+    <div class="banner banner-warn" style="margin:12px 0 0">⚠️ <div><b>最容易填错的地方</b>：这里填的是 <b>MemVault 网关</b>的地址，<b>不是</b>刚才那个中转站的地址。前端连网关，网关连中转站。</div></div>
   `, `<button class="btn btn-secondary" data-wiz="back2">← 上一步</button><button class="btn btn-primary" data-wiz="done">完成，进入面板 →</button>`);
 
   mask.querySelector('[data-wiz="copy"]').addEventListener('click', async () => {

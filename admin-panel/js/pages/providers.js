@@ -52,8 +52,8 @@ export default {
     if (!el) return;
     const host = location.host || '127.0.0.1:4180';
     const base = `${location.protocol}//${host}/v1`;
-    const rawBase = `${location.protocol}//${(location.hostname || '127.0.0.1')}:4182/v1`;
-    const mcpUrl = `${location.protocol}//${(location.hostname || '127.0.0.1')}:4181/mcp`;
+    const rawBase = `${location.protocol}//${(location.hostname || '10.200.0.17')}:4182/v1`;
+    const mcpUrl = `${location.protocol}//${(location.hostname || '10.200.0.17')}:4181/mcp`;
     const mcpJson = JSON.stringify({
       mcpServers: { cradle: { url: mcpUrl, transport: 'streamable_http' } }
     }, null, 2);

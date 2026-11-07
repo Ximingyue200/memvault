@@ -148,6 +148,9 @@ def connect(db_path: str) -> sqlite3.Connection:
     con = sqlite3.connect(db_path, timeout=30)
     con.row_factory = sqlite3.Row
     con.executescript(SCHEMA)
+    # 完整 DDL（从线上库导出）：spans / card_recall / learn_seen 等都在这
+    from . import initdb
+    initdb.ensure(con)
     _migrate(con)
     # 依赖 _migrate 补的列，必须在 migrate 之后建（v1 库直接执行会 no such column）
     con.execute("CREATE INDEX IF NOT EXISTS idx_cards_status ON cards(status)")
@@ -166,9 +169,41 @@ def _migrate(con):
         ("status", "TEXT DEFAULT 'active'"),
         ("owner", "TEXT DEFAULT 'human'"),
         ("claim_type", "TEXT DEFAULT 'unknown'"),
+        ("occurred_at", "TEXT"),
+        ("category", "TEXT"),
+        ("promoted_at", "TEXT"),
+        ("importance", "INTEGER DEFAULT 5"),
+        ("consolidate_of", "TEXT"),
+        ("related_card", "INTEGER"),
+        ("heat", "REAL DEFAULT 0"),
+        ("last_hit_at", "TEXT"),
+        ("pinned", "INTEGER DEFAULT 0"),
+        ("softened_at", "TEXT"),
+        ("body_orig", "TEXT"),
+        ("scope", "TEXT NOT NULL DEFAULT 'global'"),
+        ("project_id", "TEXT"),
     ):
         if col not in have:
             con.execute(f"ALTER TABLE cards ADD COLUMN {col} {decl}")
+    _fts_standalone(con)
+    con.commit()
+
+
+def _fts_standalone(con):
+    """把 cards_fts 从「外部内容表」转成独立表。
+
+    外部内容表只支持用 'delete' 命令维护；代码里那句
+    `DELETE FROM cards_fts WHERE rowid=?` 在行还没进索引时直接报
+    `database disk image is malformed`（首次写入必踩）。独立表没这问题。
+    """
+    row = con.execute("SELECT sql FROM sqlite_master WHERE name='cards_fts'").fetchone()
+    if not row or not row[0] or "content=" not in row[0]:
+        return
+    con.executescript("""
+        DROP TABLE IF EXISTS cards_fts;
+        CREATE VIRTUAL TABLE cards_fts USING fts5(title, body, tokenize=trigram);
+    """)
+    con.execute("INSERT INTO cards_fts(rowid,title,body) SELECT id,title,body FROM cards")
     con.commit()
 
 

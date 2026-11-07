@@ -78,7 +78,7 @@ def build(db=DB):
         if c < 3:
             continue
         if w.isdigit():
-            # 只留 4 位以上、且不是常见容量值的数字（XXXX / 8006 / 9210）
+            # 只留 4 位以上、且不是常见容量值的数字（8845 / 8006 / 9210）
             if len(w) < 4 or w in _NUM_NOISE:
                 continue
         ents.append({"w": w, "df": c, "idf": round(math.log(total / (1 + c)), 3)})

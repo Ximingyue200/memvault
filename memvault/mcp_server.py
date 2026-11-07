@@ -33,9 +33,11 @@ PROTOCOL = "2025-06-18"
 TOOLS = [
     {
         "name": "recall",
-        "description": "检索摇篮里的记忆卡片。返回标题、正文、时间、分数。",
+        "description": "检索摇篮里的记忆卡片。返回标题、正文、时间、分数。\n参数（JSON，可选字段可省略）：\n- query   string  必填  要查的内容，用自然语言，例如 \"我的内存条是什么牌子\"\n- topk    integer 可选  返回条数，默认 6\n- min_score number 可选 最低相关度 0~1，默认 0.30，调低更宽",
         "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "query": {"type": "string", "description": "要查的内容，用自然语言"},
                 "topk": {"type": "integer", "default": 6},
@@ -46,9 +48,11 @@ TOOLS = [
     },
     {
         "name": "retain",
-        "description": "把一条事实写进摇篮。会自动生成 span 作为证据，保持可追溯。",
+        "description": "把一条事实写进摇篮。会自动生成 span 作为证据，保持可追溯。\n写入后状态是 proposal，需人工批准（mvapprove）才会进检索。\n参数（JSON，可选字段可省略）：\n- text    string 必填  要记住的内容，一句话或一小段\n- title   string 可选  标题，不填取正文前 24 字\n- kind    string 可选  definition / event / preference / plan，默认 event\n- conv_id string 可选  会话标识，默认 mcp",
         "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "text": {"type": "string", "description": "要记住的内容，一句话或一小段"},
                 "title": {"type": "string", "description": "可选标题，不填取正文前 24 字"},
@@ -60,12 +64,12 @@ TOOLS = [
     },
     {
         "name": "stats",
-        "description": "库的概览：卡片数、span 数、待学习量、热度和取代边数量。",
+        "description": "库的概览：卡片数、span 数、待学习量、热度和取代边数量。\n参数：无（调用时传空对象 {} 即可）。",
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
         "name": "report",
-        "description": "摇篮的最新健康日报：卡片/原文/注入次数/余额，纯读本地文件。",
+        "description": "摇篮的最新健康日报：卡片/原文/注入次数/余额，纯读本地文件。\n注意是每日 08:00 生成的快照，不含当天此后的新增。\n参数：无（调用时传空对象 {} 即可）。",
         "inputSchema": {"type": "object", "properties": {}},
     },
 ]
@@ -230,6 +234,17 @@ def dispatch(method, params):
         fn = {"recall": tool_recall, "retain": tool_retain, "stats": tool_stats, "report": tool_report}.get(name)
         if not fn:
             return (None, {"code": -32602, "message": "unknown tool: %s" % name})
+        # 入参严格校验：schema 里写了 additionalProperties=false，服务端就得真的拒
+        _spec = next((t for t in TOOLS if t.get("name") == name), {})
+        _schema = _spec.get("inputSchema") or {}
+        _props = list((_schema.get("properties") or {}).keys())
+        _extra = sorted(set(args) - set(_props))
+        if _extra:
+            return (None, {"code": -32602,
+                           "message": "%s 不认识参数 %s（可用：%s）" % (name, ", ".join(_extra), ", ".join(_props) or "无")})
+        _miss = [r for r in (_schema.get("required") or []) if args.get(r) in (None, "")]
+        if _miss:
+            return (None, {"code": -32602, "message": "%s 缺少必填参数：%s" % (name, ", ".join(_miss))})
         try:
             out = fn(args)
         except Exception as e:
@@ -262,6 +277,8 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/health", "/"):
             self._send(200, {"ok": True, "server": NAME, "version": VERSION, "protocol": PROTOCOL,
                              "tools": [t["name"] for t in TOOLS]})
+        elif path == "/mcp":
+            self._sse_stream()
         elif path == "/registry":
             # 能力登记簿：任何 agent 一条 GET 就知道这台机器上有哪些技能和 MCP，
             # 需要哪个再自己去 /registry/skill/<名字> 取正文 —— 按需取用，不预装。
@@ -289,6 +306,36 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(raw)
         else:
             self._send(404, {"error": "not found"})
+
+    def do_DELETE(self):
+        """MCP 会话收尾：规范要求 204，之前没实现会回 501，客户端判定异常。"""
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _sse_stream(self):
+        """GET /mcp —— server→client 的 SSE 通道。
+
+        本服务是请求-响应式的，不会主动推送内容；但协议允许客户端开这条流，
+        不开就会让一些客户端（OpenClaw）误判连接已关闭。这里挂住并定期发心跳。
+        """
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("mcp-session-id", self.headers.get("mcp-session-id") or "")
+        self.end_headers()
+        try:
+            self.wfile.write(b": connected\n\n")
+            self.wfile.flush()
+            for _ in range(240):  # 最长挂 60 分钟
+                time.sleep(15)
+                self.wfile.write(b": ping\n\n")
+                self.wfile.flush()
+        except Exception:
+            return  # 客户端断开
 
     def do_POST(self):
         n = int(self.headers.get("Content-Length") or 0)

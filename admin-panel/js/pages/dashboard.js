@@ -99,7 +99,7 @@ export default {
         actions: '<span class="muted" style="font-size:12px">输入一句话，看现在说这句会塞进什么</span>',
         body: `
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <input id="pv-q" type="text" placeholder="例如：暗区突围 赛季 / PVE 8006 / R7-XXXX" style="flex:1;min-width:200px">
+            <input id="pv-q" type="text" placeholder="例如：暗区突围 赛季 / PVE 8006 / 8845HS" style="flex:1;min-width:200px">
             <button class="btn btn-primary" id="pv-go">试算</button>
           </div>
           <div id="pv-out" style="margin-top:12px"></div>

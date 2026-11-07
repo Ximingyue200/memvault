@@ -1,6 +1,6 @@
 // ============================================================
 // api.js — 网络层 + 纯工具（无 DOM 依赖）
-// 统一处理 kiwi-mem 的两种错误约定：
+// 统一处理 MemVault 的两种错误约定：
 //   1) 多数 /admin、/debug、/comments：HTTP 200 + {error:"..."}
 //   2) /reminders、/sync、/admin/search-*：真实 HTTP 状态码
 // jfetch 在「响应含真值 error 键 或 HTTP>=400」时 throw。

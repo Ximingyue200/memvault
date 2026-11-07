@@ -11,7 +11,7 @@ MODEL = os.environ.get("MEMVAULT_EMBED_MODEL", "bge-m3")
 
 # 每个类配一组「代表说法」，比单句描述更稳
 DESC = {
-    "硬件/CPU": "CPU 处理器 AMD XXXX 7840 9850X3D Intel 锐龙 霄龙 核心 线程 主频",
+    "硬件/CPU": "CPU 处理器 AMD 8845 7840 9850X3D Intel 锐龙 霄龙 核心 线程 主频",
     "硬件/内存": "内存 DDR4 DDR5 内存条 频率 时序 ECC 容量",
     "硬件/存储": "硬盘 SSD NVMe 傲腾 固态 SATA 机械盘 扩容盘 分区 RAID 文件系统",
     "硬件/主板整机": "主板 整机 迷你主机 机箱 电源 BIOS 固件 USB4 雷电 准系统",

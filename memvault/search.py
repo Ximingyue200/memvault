@@ -183,6 +183,12 @@ def _quotes(con, card_id, limit=2, max_chars=400):
         ).fetchall()
     except Exception:
         return []
+    _sup_map = {}
+    try:
+        for _r in con.execute("SELECT id, supersedes FROM cards WHERE supersedes IS NOT NULL AND supersedes<>0"):
+            _sup_map[_r[1]] = _r[0]
+    except Exception:
+        pass
     out = []
     for r in rows:
         q = (r[0] or "").strip()
@@ -210,7 +216,18 @@ def hard_words(text, limit=6, whitelist=None):
 
 
 # 纯 BM25 强命中的绝对底线：logistic(8,4) 反解 b=0.62 ≈ bm25 原始分 10.6
-_BM25_FLOOR = 0.62
+_BM25_FLOOR = 0.62          # 长查询用的严格门槛
+_BM25_FLOOR_SHORT = 0.30    # 短查询（中文两三个字）用宽松门槛，否则恒被丢弃
+
+
+def _bm25_floor(q):
+    """中文短查询的 BM25 分天然很低（两字词约 0.15），按查询长度自适应门槛。"""
+    q = (q or "").strip()
+    if len(q) <= 6:
+        return _BM25_FLOOR_SHORT
+    if len(q) <= 12:
+        return (_BM25_FLOOR_SHORT + _BM25_FLOOR) / 2
+    return _BM25_FLOOR
 
 
 def _bm25_score(pairs, mid=8.0, scale=4.0):
@@ -321,7 +338,7 @@ def search(con, q, topk=10, min_score=0.30, intent=None, role_filter=None, owner
             score *= (1.0 + 0.04 * math.log1p(proof))
         # 启动效应：被反复检索、且被不同问法命中过的卡，说明它「有用」。
         # 但必须是微调，不能翻盘——实测乘 1.26 会让 recall=25 的万金油卡
-        # 把语义更准的卡挤到后面（问 XXXX 时 WLAN-XXXX 靠加成从 0.455 冲到 0.573）。
+        # 把语义更准的卡挤到后面（问 8845 时 MT7922 靠加成从 0.455 冲到 0.573）。
         # 改成加法，上限 0.05，只做同分附近的 tie-break。
         n_rec, n_uq = rec_stats.get(cid, (0, 0))
         if n_rec:
@@ -330,7 +347,7 @@ def search(con, q, topk=10, min_score=0.30, intent=None, role_filter=None, owner
         # 但纯 BM25 命中的融合分上限只有 0.35*b，永远够不着 0.30 这条线，
         # 双路的「关键词精确命中」会整批消失。所以给 BM25 单独一条绝对底线：
         # b >= _BM25_FLOOR（对应 bm25 原始分约 -10）就当作强命中放行。
-        if score < min_score and b < _BM25_FLOOR:
+        if score < min_score and b < _bm25_floor(q):
             continue
         try:
             _lh = r["last_hit_at"]
@@ -338,10 +355,10 @@ def search(con, q, topk=10, min_score=0.30, intent=None, role_filter=None, owner
             _band = _heat.band(_live, _heat_p, _lh) if _heat and _heat_p else "never"
         except Exception:
             _live, _band = 0.0, "never"
-        if r["supersedes"]:
-            # 这张卡已经被别的卡取代：降权但仍保留（可追溯）。
+        # 被取代的是「旧卡」：别的卡把 supersedes 指向我，我才该降权。
+        if cid in _sup_map:
             score *= 0.55
-            superseded_by = r["supersedes"]
+            superseded_by = _sup_map[cid]
         else:
             superseded_by = None
         out.append({
@@ -409,7 +426,7 @@ _TIME_WORDS = ("今年", "去年", "前年", "上个月", "上个星期", "上�
                "前阵子", "之前", "那时候", "当时", "在干嘛", "干什么了", "做了什么",
                "忙什么", "在折腾什么", "这几年", "这一年", "这几个月", "回顾", "总结一下")
 _HARD_ENTITY = _re.compile(
-    r"(?<!\d)\d{2,5}(?!\d)"                      # 8006 / 1024 / XXXX
+    r"(?<!\d)\d{2,5}(?!\d)"                      # 8006 / 1024 / 8845
     r"|/[a-z0-9_/.-]{3,}"                 # 路径
     r"|\b[a-z_]+[.-][a-z0-9-]{2,}\b"     # 文件名 / 包名
     r"|\b[A-Z]{2,}\b"                   # SSH / PVE / DNS
@@ -418,7 +435,7 @@ _HARD_ENTITY = _re.compile(
 
 
 def _num_hit(quote, word):
-    """数字词要求十六进制边界，否则 XXXX 会命中图片 URL 里的 ...0cXXXXe3bf..."""
+    """数字词要求十六进制边界，否则 8845 会命中图片 URL 里的 ...0c8845e3bf..."""
     if not any(c.isdigit() for c in word):
         return word in quote
     pat = re.compile(r"(?<![0-9a-fA-F])" + re.escape(word) + r"(?![0-9a-fA-F])")
@@ -428,12 +445,12 @@ def _num_hit(quote, word):
 def timeline(con, q, limit=20, per_conv=2, max_days=6, per_day=2):
     """问「什么时候/哪次」时用：原文全文命中 -> 按时间排 -> 按会话去重。
 
-    为什么不走向量：问「XXXX 是什么」和问「什么时候聊过 XXXX」是两个问题。
+    为什么不走向量：问「8845 是什么」和问「什么时候聊过 8845」是两个问题。
     前者要语义最近的卡，后者只要「哪几段对话里提到过它」，按时间给。
     用向量答后者，返回的是规格卡的时间戳，答非所问。
 
-    为什么稀有词必须全中、通用词只加分：问「什么时候问过 XXXX 的 CPU」时，
-    「CPU」单独出现有几千条，「XXXX」只有一千多条，要求两者同现才是那个问题。
+    为什么稀有词必须全中、通用词只加分：问「什么时候问过 8845 的 CPU」时，
+    「CPU」单独出现有几千条，「8845」只有一千多条，要求两者同现才是那个问题。
     """
     words = hard_words(q, limit=4)
     if not words:

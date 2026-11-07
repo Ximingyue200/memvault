@@ -302,8 +302,24 @@ class Handler(BaseHTTPRequestHandler):
         p = urllib.parse.urlparse(self.path)
         qs = urllib.parse.parse_qs(p.query)
 
+        if p.path in ("/dream", "/dreams/ui", "/tree2d", "/mind", "/tline", "/tl",
+                       "/snap3d", "/star3d", "/star", "/map2d", "/settings.html"):
+            # 这些是旧查看页，已下线；面板统一在 :4180/admin
+            host = (self.headers.get("host") or "127.0.0.1").split(":")[0]
+            self.send_response(302)
+            self.send_header("Location", "http://%s:4180/admin" % host)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         if p.path in ("/", "/ui"):
-            return self._send_html(200, _webui_html())
+            # 只保留一套界面（4180/admin）；旧界面统一跳过去
+            host = (self.headers.get("host") or "127.0.0.1").split(":")[0]
+            self.send_response(302)
+            self.send_header("Location", "http://%s:4180/admin" % host)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+
 
         if p.path == "/snap3d":
             qst = urllib.parse.parse_qs(p.query or "")
@@ -502,12 +518,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(500, {"error": str(e)})
 
         if p.path in ("/admin", "/a"):
-            try:
-                html = open("/opt/memvault/memvault/admin.html", encoding="utf-8").read()
-            except Exception as e:
-                return self._send(500, {"error": str(e)})
-            return self._send_html(200, html)
-
+            # 只保留一套界面（4180/admin）；旧界面统一跳过去
+            host = (self.headers.get("host") or "127.0.0.1").split(":")[0]
+            self.send_response(302)
+            self.send_header("Location", "http://%s:4180/admin" % host)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         if p.path in ("/timeline", "/chron/ui"):
             return self._send_html(200, TL_HTML)
 
@@ -833,7 +850,11 @@ class Handler(BaseHTTPRequestHandler):
 
         if p.path.startswith("/report/"):
             name = p.path[len("/report/"):]
-            if "/" in name or not name.endswith(".md") or ".." in name:
+            if "/" in name or ".." in name:
+                return self._send(400, {"error": "bad name"})
+            if not name.endswith(".md"):
+                name += ".md"          # 面板里写的是 /report/latest，补上后缀
+            if not name.endswith(".md"):
                 return self._send(400, {"error": "bad name"})
             fp = os.path.join("/opt/memvault/reports", name)
             if not os.path.exists(fp):
@@ -1305,6 +1326,8 @@ class Handler(BaseHTTPRequestHandler):
                 }
 
             op = str(data.get("op") or "save")
+            if op not in ("save", "body", "delete"):
+                return self._send(400, {"error": "未知 op：%s（只认 save / body / delete）" % op[:40]})
 
             if op == "body":
                 # 单独写某个技能的正文

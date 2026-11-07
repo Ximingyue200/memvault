@@ -30,7 +30,7 @@ const WIRED = new Set(['gateway', 'sync', 'security', 'pending', 'supersede', 'r
 const NOT_WIRED_TIP = {
   dashboard:   '仪表盘统计要读 /admin/stats，本网关暂未实现。',
   websearch:   '联网搜索由上游模型自带，本网关不代理搜索。',
-  tools:       '工具抽屉属于 kiwi-mem 的 MCP 调度，本网关没有这一层。',
+  tools:       '工具抽屉属于 MemVault 的 MCP 调度，本网关没有这一层。',
   persona:     '人设请直接写在上游客户端的 system prompt。',
   profile:     '用户画像要读 /admin/profile，本网关暂未实现。',
   memories:    '记忆碎片要读 /admin/memories，本网关的卡片请用 / 页面的「记忆」tab。',
@@ -39,8 +39,8 @@ const NOT_WIRED_TIP = {
   dream:       'Dream 要读 /admin/dream-logs，本网关的梦在 / 页面的「梦境」tab。',
   calendar:    '日历要读 /admin/calendar，本网关的编年史在 / 页面。',
   compression: '上下文压缩由上游客户端处理，本网关只做记忆注入。',
-  handoff:     '无缝换窗属于 kiwi-mem 的会话衔接，本网关没有。',
-  projects:    '项目分隔属于 kiwi-mem 的租户层，本网关没有。',
+  handoff:     '无缝换窗属于 MemVault 的会话衔接，本网关没有。',
+  projects:    '项目分隔属于 MemVault 的租户层，本网关没有。',
   gateway:     '网关与延迟要读 /admin/gateway，本网关暂未实现。',
   sync:        '备份与数据要读 /admin/sync，本网关暂未实现。',
   security:    '认证与安全：本网关当前无鉴权（仅内网可达）。',
@@ -149,8 +149,8 @@ async function route() {
   if (REMOVED[key]) {
     highlight('');
     titleEl.textContent = '页面已移除';
-    crumbEl.textContent = 'kiwi-mem';
-    document.title = '页面已移除 · Kiwi-Mem';
+    crumbEl.textContent = "MemVault";
+    document.title = '页面已移除 · MemVault';
     content.scrollTop = 0;
     closeSidebar();
     try { currentMod?.unmount?.(); } catch {}
@@ -165,8 +165,8 @@ async function route() {
   if (!WIRED.has(key)) {
     highlight(key);
     titleEl.textContent = `${meta.icon} ${meta.label}`;
-    crumbEl.textContent = meta.group || 'kiwi-mem';
-    document.title = `${meta.label} · Kiwi-Mem`;
+    crumbEl.textContent = meta.group || "MemVault";
+    document.title = `${meta.label} · MemVault`;
     content.scrollTop = 0;
     closeSidebar();
     try { currentMod?.unmount?.(); } catch {}
@@ -183,8 +183,8 @@ async function route() {
 
   highlight(key);
   titleEl.textContent = `${meta.icon} ${meta.label}`;
-  crumbEl.textContent = meta.group || 'kiwi-mem';
-  document.title = `${meta.label} · Kiwi-Mem`;
+  crumbEl.textContent = meta.group || "MemVault";
+  document.title = `${meta.label} · MemVault`;
   content.scrollTop = 0;
   content.innerHTML = loadingBlock();
   closeSidebar();

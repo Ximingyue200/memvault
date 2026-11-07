@@ -66,7 +66,7 @@ def _title_keys(title):
     for m in _re.findall(r"[A-Za-z][A-Za-z0-9._\-]{1,}", t):
         if m.lower() not in ("the", "and", "for", "of", "to"):
             keys.append(m)
-    # 2) 数字型号：780M / 7600 / XXXX
+    # 2) 数字型号：780M / 7600 / 8845
     for m in _re.findall(r"\d{3,4}[A-Za-z]{0,2}", t):
         if m not in keys:
             keys.append(m)

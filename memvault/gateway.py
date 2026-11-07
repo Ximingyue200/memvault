@@ -184,6 +184,25 @@ DB = os.environ.get("GW_DB", "/opt/memvault-gw/data/memvault.db")
 TOPK = int(os.environ.get("GW_TOPK", "6"))
 MIN_SCORE = float(os.environ.get("GW_MIN_SCORE", "0.30"))
 AUTH_TOKEN = os.environ.get("GW_TOKEN", "")          # 空 = 不校验（仅限内网）
+
+_SECRET_KEY_RE = re.compile(r"(?:(?:api|access|secret|private)[_-]?key|[._-]key|token|secret|password|passwd)$", re.I)
+
+
+def _mask_secret(v):
+    """密钥类值只留尾 4 位；空值原样返回。"""
+    s = "" if v is None else str(v)
+    if not s:
+        return ""
+    return "****" + s[-4:] if len(s) > 4 else "****"
+
+
+def mask_values(values):
+    """把 values 里看起来是密钥的键打码（用于任何对外返回 settings 的地方）。"""
+    out = {}
+    for k, v in (values or {}).items():
+        out[k] = _mask_secret(v) if _SECRET_KEY_RE.search(k) else v
+    return out
+
 DEBUG = os.environ.get("GW_DEBUG", "") == "1"
 
 _LOCAL = threading.local()
@@ -1044,6 +1063,11 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         p = self.path.split("?")[0]
+        # READ_GUARD_PATCHED
+        if p in ("/settings", "/v1/settings", "/providers", "/v1/providers",
+                 "/providers/models", "/v1/providers/models", "/stats", "/debug") \
+                and not self._auth_ok():
+            return self._json(401, {"error": {"message": "unauthorized: 需要 Authorization: Bearer $GW_TOKEN"}})
         if p == "/":
             self.send_response(302)
             self.send_header("location", "/admin#/console")
@@ -1115,6 +1139,7 @@ class H(BaseHTTPRequestHandler):
             values = {}
             for k in SETTING_META:
                 values[k] = gw_setting(k, SETTING_META[k]["def"])
+            values = mask_values(values)
             self._json(200, {"meta": SETTING_META, "groups": GROUPS, "values": values})
         elif p in ("/providers", "/v1/providers"):
             self._list_providers()
@@ -2160,6 +2185,11 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         log("POST 进入 %s" % self.path)
         p = self.path.split("?")[0]
+        # WRITE_GUARD_PATCHED
+        if p in ("/settings", "/v1/settings", "/providers", "/v1/providers",
+                 "/providers/test", "/v1/providers/test", "/providers/models") \
+                and not self._auth_ok():
+            return self._json(401, {"error": {"message": "unauthorized: 需要 Authorization: Bearer $GW_TOKEN"}})
         n = int(self.headers.get("content-length") or 0)
         raw = self.rfile.read(n) if n else b""
         if p.startswith("/admin/cradle/"):
@@ -2641,8 +2671,9 @@ class H(BaseHTTPRequestHandler):
     # ---- 主流程 ----
     def _chat(self, raw):
         try:
-            with open("/tmp/last_msgs.json", "w", encoding="utf-8") as _f:
-                json.dump((json.loads(raw) if isinstance(raw, (bytes, str)) else {}).get("messages") or [], _f, ensure_ascii=False, indent=1)
+            if os.environ.get("MEMVAULT_DUMP_MSGS") == "1":
+                with open("/tmp/last_msgs.json", "w", encoding="utf-8") as _f:
+                    json.dump((json.loads(raw) if isinstance(raw, (bytes, str)) else {}).get("messages") or [], _f, ensure_ascii=False, indent=1)
         except Exception:
             pass
         try:
@@ -2709,9 +2740,10 @@ class H(BaseHTTPRequestHandler):
                     _f.write(q)
                 with open("/tmp/last_block.txt", "w", encoding="utf-8") as _f:
                     _f.write(block)
-                with open("/tmp/last_msgs.json", "w", encoding="utf-8") as _f:
-                    import json as _j
-                    _f.write(_j.dumps([{"role": m.get("role"), "len": len(str(m.get("content") or "")), "head": str(m.get("content") or "")[:120]} for m in msgs], ensure_ascii=False, indent=1))
+                if os.environ.get("MEMVAULT_DUMP_MSGS") == "1":
+                    with open("/tmp/last_msgs.json", "w", encoding="utf-8") as _f:
+                        import json as _j
+                        _f.write(_j.dumps([{"role": m.get("role"), "len": len(str(m.get("content") or "")), "head": str(m.get("content") or "")[:120]} for m in msgs], ensure_ascii=False, indent=1))
                 log("WROTE %d chars" % len(q))
             except Exception as _e:
                 log("WRITE FAILED %r" % (_e,))
@@ -2841,6 +2873,19 @@ class H(BaseHTTPRequestHandler):
         if final is None:
             return False
 
+        # 空回复兜底：模型只思考不出话（无正文、无工具调用）时不带工具再问一次
+        try:
+            _m = ((final.get("choices") or [{}])[0]).get("message") or {}
+            if not (_m.get("content") or "").strip() and not (_m.get("tool_calls") or []):
+                _b2 = dict(body)
+                _b2.pop("tools", None); _b2.pop("tool_choice", None)
+                _b2["messages"] = list(msgs) + [{"role": "user", "content": "请直接回答问题，不要只输出思考过程。"}]
+                _r2, _p2, _s2 = self._upstream_json(_b2)
+                if _r2:
+                    final = _r2
+        except Exception as _e:
+            log("mcp 空回复兜底失败:", _e)
+
         try:
             m = final["choices"][0]["message"]
             remember_reasoning(ck, m.get("reasoning_content"))
@@ -2875,7 +2920,13 @@ class H(BaseHTTPRequestHandler):
             delta["object"] = "chat.completion.chunk"
             choice = dict((final.get("choices") or [{}])[0])
             msg = choice.pop("message", {}) or {}
-            choice["delta"] = {"role": "assistant", "content": msg.get("content") or ""}
+            _d = {"role": "assistant", "content": msg.get("content") or ""}
+            if msg.get("tool_calls"):
+                # 流式里也必须把 tool_calls 发出去，否则客户端只看到空正文
+                _d["tool_calls"] = msg["tool_calls"]
+                _d["content"] = None
+                choice["finish_reason"] = "tool_calls"
+            choice["delta"] = _d
             choice["finish_reason"] = choice.get("finish_reason") or "stop"
             delta["choices"] = [choice]
             emit(delta)

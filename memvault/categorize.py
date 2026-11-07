@@ -45,7 +45,7 @@ PROMPT = """把下面这些技术关键词归到给定分类。只输出 JSON �
 3 手机刷机/Magisk/IMEI 归「应用/手机」
 4 PVE/LXC/容器/直通 归「系统/虚拟化」
 5 OpenWrt/QWRT/AdGuard/Clash/DNS/DHCP/VPN/frp 归「系统/网络」
-6 XXXX/7840/AMD/Intel CPU 归「硬件/CPU」
+6 8845/7840/AMD/Intel CPU 归「硬件/CPU」
 7 SSD/傲腾/SATA/NVMe/扩容盘 归「硬件/存储」
 8 记忆库/OpenViking/memvault/cradle/MCP 归「应用/记忆库」
 
