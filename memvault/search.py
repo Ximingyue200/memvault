@@ -14,6 +14,7 @@ import hashlib, json
 import math
 import os
 import re
+import re
 import time
 
 import numpy as np
@@ -44,15 +45,37 @@ INTENT_ROLES = {
 }
 
 
+_CJK = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
+
+# LIKE 兜底时给的伪 bm25 原始分：标题命中 > 正文命中。
+# 不能用 1.0 —— logistic(1.0; mid=8, scale=4) 只算出 0.15，会被 _bm25_floor 直接丢掉，
+# 这就是「两个字的词搜不到东西」的真正原因（FTS5 的 unicode61 把连续汉字当成一个整词，
+# 两字查询永远没法和库里的长词对齐）。
+_LIKE_HIT_TITLE = 16.0
+_LIKE_HIT_BODY = 12.0
+
+
+def _like_rows(con, q, limit=100):
+    """中文短查询 / FTS 打空时的兜底：直接 LIKE 扫，按命中位置给伪分。"""
+    rows = con.execute(
+        "SELECT c.id, c.title, c.body, (c.title LIKE ?) AS t_hit "
+        "FROM cards c WHERE c.status='active' AND (c.title LIKE ? OR c.body LIKE ?) "
+        "LIMIT ?",
+        (f"%{q}%", f"%{q}%", f"%{q}%", limit),
+    ).fetchall()
+    return [(r["id"], _LIKE_HIT_TITLE if r["t_hit"] else _LIKE_HIT_BODY) for r in rows]
+
+
 def _bm25(con, q, limit=100):
-    """trigram 需要 >=3 字符；不足则退化为 LIKE。"""
+    """FTS5 + 中文兜底。连续汉字在 unicode61 里是整词，短查询必须退到 LIKE。"""
     q = q.strip()
-    if len(q) < 3:
-        rows = con.execute(
-            "SELECT c.id, c.title, c.body FROM cards c WHERE c.status='active' AND c.body LIKE ? LIMIT ?",
-            (f"%{q}%", limit),
-        ).fetchall()
-        return [(r["id"], 1.0) for r in rows]
+    if not q:
+        return []
+    if len(q) < 3 or (_CJK.search(q) and len(q) <= 4):
+        # 中文两三字（内存 / 摇篮 / 网卡驱动）先走 LIKE，比 FTS 里的整词匹配可靠
+        rows = _like_rows(con, q, limit)
+        if rows:
+            return rows
     try:
         rows = con.execute(
             # 标题权重 3 : 正文权重 1
@@ -64,7 +87,9 @@ def _bm25(con, q, limit=100):
             (q, limit),
         ).fetchall()
     except Exception:
-        return []
+        rows = []
+    if not rows and _CJK.search(q):
+        return _like_rows(con, q, limit)
     return [(r["id"], -r["s"]) for r in rows]  # bm25 越小越相关
 
 
@@ -326,7 +351,7 @@ def search(con, q, topk=10, min_score=0.30, intent=None, role_filter=None, owner
                 pass
 
     out = []
-    # 旧卡 → 新卡 映射（supersedes 是「新卡指向旧卡」，反查才知道谁该降权）
+    # 旧卡 → 新卡 映射（supersedes 是「新卡指向旧卡」，所以反查得到谁被取代）
     _sup_map = {}
     try:
         for _oid, _nid in con.execute(
