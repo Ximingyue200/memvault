@@ -107,6 +107,115 @@ def _exists(con, sig):
     return bool(r)
 
 
+FIXCMD = re.compile(
+    r"(?:^|[\s`'\"(])(?:apt|apt-get|pip3?|npm|pnpm|yarn|docker|docker-compose|pct|qm|"
+    r"systemctl|journalctl|kill|pkill|pgrep|sed|awk|grep|rg|curl|wget|ssh|scp|rsync|"
+    r"git|cd|ls|cat|tee|chmod|chown|mount|umount|ip|iptables|tar|unzip|node|python3?|"
+    r"bash|sh|export|source|set|sysctl|modprobe|ln|cp|mv|rm|mkdir|uv|go|cargo|make)\b",
+    re.I)
+
+
+def _loose(sig):
+    """去重用的宽松键：把路径尾巴统一成 <p>，URL 主体也收掉。"""
+    x = re.sub(r"/[^\s]+", "/<p>", sig or "")
+    x = re.sub(r"\s+", " ", x).strip()
+    return x[:100]
+
+
+def add(con, error, fix, scope="", quote="", owner="agent", source="pitfall/mcp"):
+    """记一条坑。三道闸：必须有修法；默认 proposal（含命令才 active）；同签名只加 hits。
+
+    返回 {"ok","id","status","dup","hits","signature"} 或 {"ok":False,"error"}。
+    """
+    from datetime import datetime, timezone
+    import hashlib
+
+    err = re.sub(r"\s+", " ", (error or "").strip())
+    fx = (fix or "").strip()
+    if len(err) < 6:
+        return {"ok": False, "error": "error 太短（至少 6 个字，贴原始报错那一行）"}
+    if len(fx) < 6:
+        return {"ok": False, "error": "fix 太短（没有修法就不算坑，先别写）"}
+
+    sig = _norm_sig(err)
+    if len(sig) < 4:
+        return {"ok": False, "error": "报错串归一化后为空，换个更有信息量的那行"}
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+    from . import store as _st
+    _st._migrate(con)
+
+    # 去重不用 topic 全等：路径尾巴 /x 与 /y 是同一条坑。
+    # 老卡不动（topic 保持原样），只在内存里算"宽松键"比对。
+    key = _loose(sig)
+    row = None
+    for r in con.execute(
+            "select id, topic, coalesce(hits,0) h, coalesce(status,'active') st "
+            "from cards where extractor_version=?", (CARD_MARK,)):
+        if _loose(r["topic"] or "") == key:
+            row = (r["id"], r["h"], r["st"], r["topic"])
+            break
+    if row:
+        cid, h, st = row[0], row[1], row[2]
+        con.execute("update cards set hits=?, last_seen=? where id=?", (h + 1, now, cid))
+        _ev(con, cid, err, quote, now, owner)
+        con.commit()
+        return {"ok": True, "dup": True, "id": cid, "status": st, "hits": h + 1,
+                "signature": sig, "note": "同一个坑又出现了一次，只加计数，没有新建卡"}
+
+    status = "active" if FIXCMD.search(fx) else "proposal"
+    title = ("踩坑：" + (sig[:52] or err[:52]))[:80]
+    body = ("现象：%s\n修法：%s\n范围：%s\n记录者：%s\n来源：%s"
+            % (err[:400], fx[:400], (scope or "未注明")[:60], owner, source))[:MAX_BODY]
+    sid = "sp_pit_" + hashlib.sha1((sig + quote[:120] + now).encode("utf-8")).hexdigest()[:16]
+    con.execute(
+        "insert or ignore into spans(span_id,conv_id,msg_id,seq,role,ts,char_start,char_end,"
+        "quote,text_hash,created_at) values(?,?,?,?,?,?,?,?,?,?,?)",
+        (sid, "pitfall", 0, 0, "user", now, 0, len(err), err[:800],
+         hashlib.sha1(err.encode("utf-8")).hexdigest(), now))
+    card = {"title": title, "body": body, "kind": CARD_KIND, "topic": sig, "owner": owner,
+            "source_path": source[:200], "extractor_version": CARD_MARK, "status": status}
+    evs = [{"span_id": sid, "role": "user", "quote": (quote or err)[:120],
+            "char_start": 0, "char_end": min(120, len(quote or err)), "weight": 0.9}]
+    cid, reason = _st.ingest_card(con, card, evs, span_lookup=None)
+    if not cid:
+        con.rollback()
+        return {"ok": False, "error": "入库被拒：%s" % reason}
+    con.execute("update cards set hits=1, last_seen=? where id=?", (now, cid))
+    vec_ok = False
+    try:
+        from . import embed
+        store_vec(_st, con, cid, title + " " + body, embed)
+    except Exception as e:
+        pass
+    else:
+        vec_ok = True
+    con.commit()
+    return {"ok": True, "dup": False, "id": cid, "status": status, "hits": 1,
+            "signature": sig, "vec": vec_ok,
+            "note": "已入库" + ("（可直接检索）" if status == "active" else "（缺可执行命令，先待审）")}
+
+
+def store_vec(_st, con, cid, text, embed):
+    vec = embed.embed([text])[0]
+    _st.put_vector(con, cid, vec)
+
+
+def _ev(con, cid, err, quote, now, owner):
+    """给已有的卡追加一条证据（不覆盖正文）。"""
+    import hashlib
+    sid = "sp_pit_" + hashlib.sha1((str(cid) + err[:80] + now + owner).encode("utf-8")).hexdigest()[:16]
+    con.execute(
+        "insert or ignore into spans(span_id,conv_id,msg_id,seq,role,ts,char_start,char_end,"
+        "quote,text_hash,created_at) values(?,?,?,?,?,?,?,?,?,?,?)",
+        (sid, "pitfall", 0, 0, "user", now, 0, len(err), err[:800],
+         hashlib.sha1(err.encode("utf-8")).hexdigest(), now))
+    con.execute(
+        "insert into card_evidence(card_id,span_id,quote,char_start,char_end,role,weight,created_at) "
+        "values(?,?,?,?,?,?,?,?)",
+        (cid, sid, (quote or err)[:120], 0, min(120, len(quote or err)), "user", 0.6, now))
+
+
 def scan(con, days=2, dry=False, max_cards=40):
     from memvault import store
 

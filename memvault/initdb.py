@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS cards(
   source_range  TEXT,
   created_at    TEXT,
   status        TEXT DEFAULT active
-, schema_version INTEGER DEFAULT 1, extractor_version TEXT, supersedes INTEGER, updated_at TEXT, owner TEXT DEFAULT 'human', occurred_at TEXT, claim_type TEXT DEFAULT 'unknown', category TEXT, promoted_at TEXT, importance INTEGER DEFAULT 5, consolidate_of TEXT, related_card INTEGER, heat REAL DEFAULT 0, last_hit_at TEXT, pinned INTEGER DEFAULT 0, softened_at TEXT, body_orig TEXT, scope text not null default 'global', project_id text);
+, schema_version INTEGER DEFAULT 1, extractor_version TEXT, supersedes INTEGER, updated_at TEXT, owner TEXT DEFAULT 'human', occurred_at TEXT, claim_type TEXT DEFAULT 'unknown', category TEXT, promoted_at TEXT, importance INTEGER DEFAULT 5, consolidate_of TEXT, related_card INTEGER, heat REAL DEFAULT 0, last_hit_at TEXT, pinned INTEGER DEFAULT 0, softened_at TEXT, body_orig TEXT, scope text not null default 'global', project_id text, hits INTEGER DEFAULT 0, last_seen TEXT);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS cards_fts USING fts5(
   title, body,

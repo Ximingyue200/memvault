@@ -182,6 +182,8 @@ def _migrate(con):
         ("body_orig", "TEXT"),
         ("scope", "TEXT NOT NULL DEFAULT 'global'"),
         ("project_id", "TEXT"),
+        ("hits", "INTEGER DEFAULT 0"),
+        ("last_seen", "TEXT"),
     ):
         if col not in have:
             con.execute(f"ALTER TABLE cards ADD COLUMN {col} {decl}")

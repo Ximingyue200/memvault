@@ -15,7 +15,7 @@
 Agent 客户端各记各的，换个模型就失忆，换个工具就重来。MemVault 把「记忆」从 agent 里剥出来，做成一个独立进程：
 
 - **Gateway 模式**（透明代理）：客户端只改 `base_url`，之后的检索、注入、落盘、记账全自动。
-- **MCP 模式**（按需取用）：不支持自定义 `base_url` 的客户端，挂一个 MCP 服务器，拿 `recall / retain / stats / report / pitfall` 等八个工具。
+- **MCP 模式**（按需取用）：不支持自定义 `base_url` 的客户端，挂一个 MCP 服务器，拿 `recall / retain / stats / report / pitfall / pitfall_add` 等九个工具。
 - 两种模式共用同一个库、同一套卡片与证据。
 
 ## 核心特性
@@ -73,7 +73,7 @@ Agent 客户端各记各的，换个模型就失忆，换个工具就重来。Me
                               │                   │
                     ┌─────────▼─────────┐  ┌──────▼──────┐
                     │  gateway.py       │  │ mcp_server  │
-                    │  检索→注入→落盘    │  │ 8 个工具     │
+                    │  检索→注入→落盘    │  │ 9 个工具     │
                     └─────────┬─────────┘  └──────┬──────┘
                               │                   │
                     ┌─────────▼───────────────────▼─────────┐
@@ -131,7 +131,7 @@ export OPENAI_API_KEY=any
 |---|---|
 | `:4180/v1` | 自动注入记忆的 OpenAI 兼容口（对话走这里） |
 | `:4182/v1` | 同一进程、**不注入**的纯净口，用来对比或排障 |
-| `:4181/mcp` | MCP：`recall` / `retain` / `stats` / `report` / `pitfall` / `pending` / `queue_stats` / `flush` |
+| `:4181/mcp` | MCP：`recall` / `retain` / `stats` / `report` / `pitfall` / `pitfall_add` / `pending` / `queue_stats` / `flush` |
 | `:4174` | 记忆库自己的 HTTP API（面板经由 `/admin/cradle/*` 调用） |
 
 > 建过 token 之后，`/v1/*`（4180、4182）与 `/mcp` 都要带 `Authorization: Bearer <token>`。
@@ -248,4 +248,4 @@ mvtoken disable eta
 ## License
 
 MIT
-| **自动采集** | `scripts/collectors/pitsync.js` 从原始会话里捞出 `isError=true` 的工具调用，配对随后的修复命令，推到 `/api/pitfall/ingest`（≥5 分直接 active）；服务端 `pitfallauto.py` 另可从 `spans` 批量回补 |
+| **记坑** | 主路径是 `pitfall_add`（MCP）：必须带修法，认出命令直接 active、否则进 proposal；同一报错签名重复写只加 `hits`。辅助：`scripts/collectors/pitsync.js` 从会话里捞 `isError=true` 自动配对，**默认关闭**（配错的修法比没有更糟） |

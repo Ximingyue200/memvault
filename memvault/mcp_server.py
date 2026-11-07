@@ -17,13 +17,19 @@ import json
 import os
 import sqlite3
 import sys
+import threading
 import time
 
 from memvault import auth as _auth
 from memvault import qflush as _q
 
-_CTX = {"who": "anonymous"}
+_CTX = threading.local()
+
+
+def _who():
+    return getattr(_CTX, "who", "anonymous")
 _FLUSH_LOCK = __import__("threading").Lock()
+import threading
 import traceback
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -89,6 +95,16 @@ TOOLS.extend([
         "inputSchema": {"$schema": "http://json-schema.org/draft-07/schema#", "type": "object",
                         "properties": {"query": {"type": "string", "description": "报错串或问题描述"}},
                         "required": ["query"], "additionalProperties": False},
+    },
+    {
+        "name": "pitfall_add",
+        "description": "记一条自己踩过的坑，给以后的自己和其他 agent 用。只在**已经解决**之后写：error 贴原始报错行，fix 写你实际做的修复（命令或步骤）。\n\n三道闸：没有 fix 直接拒；fix 里认不出可执行命令 → 存成待审（proposal），认出命令 → 直接可检索；同一个报错签名重复写不会新建卡，只把 hits 加一。\n\n参数：\n- error：必填，原始报错那一行\n- fix：必填，实际怎么修的\n- scope：可选，适用范围（如 docker/pve、android）\n- quote：可选，一句现场证据（哪次会话、什么现象）",
+        "inputSchema": {"$schema": "http://json-schema.org/draft-07/schema#", "type": "object",
+                        "properties": {"error": {"type": "string", "description": "原始报错那一行"},
+                                       "fix": {"type": "string", "description": "实际怎么修的（命令或步骤）"},
+                                       "scope": {"type": "string", "description": "适用范围，如 docker/pve"},
+                                       "quote": {"type": "string", "description": "一句现场证据"}},
+                        "required": ["error", "fix"], "additionalProperties": False},
     },
     {
         "name": "pending",
@@ -258,6 +274,21 @@ def tool_pitfall(args):
     return {"ok": True, "query": q, "count": len(out), "items": out}
 
 
+def tool_pitfall_add(args):
+    """记一条坑：三道闸（必须有修法 / 无命令先待审 / 同签名只加计数）。"""
+    args = args or {}
+    try:
+        from memvault import pitfall as _pf
+        con = _con()
+        try:
+            return _pf.add(con, args.get("error"), args.get("fix"),
+                           scope=args.get("scope") or "", quote=args.get("quote") or "",
+                           owner=_who() or "agent")
+        finally:
+            con.close()
+    except Exception as e:
+        return {"ok": False, "error": "%s: %s" % (type(e).__name__, str(e)[:160])}
+
 def tool_report(_args):
     for path in ("/opt/memvault/reports/latest.md",):
         try:
@@ -277,7 +308,7 @@ def tool_retain_q(args):
         return {"queued": False, "reason": "text 为空"}
     con = _con()
     try:
-        qid = _q.enqueue(con, text, agent=_CTX.get("who") or "anonymous",
+        qid = _q.enqueue(con, text, agent=_who(),
                          source="mcp", context=args.get("context"))
         ok, why = _q.should_flush(con)
         auto = None
@@ -295,7 +326,7 @@ def tool_retain_q(args):
         d = _q.depth(con)
     finally:
         con.close()
-    return {"queued": True, "id": qid, "agent": _CTX.get("who"),
+    return {"queued": True, "id": qid, "agent": _who(),
             "trigger": why if ok else None, "auto": auto, "queue": d,
             "note": "已进暂存队列，攒够阈值再提炼；要立刻提炼请调 flush"}
 
@@ -349,7 +380,7 @@ def dispatch(method, params):
     if method == "tools/call":
         name = (params or {}).get("name")
         args = (params or {}).get("arguments") or {}
-        fn = {"recall": tool_recall, "retain": tool_retain_q, "stats": tool_stats, "report": tool_report, "pitfall": tool_pitfall,
+        fn = {"recall": tool_recall, "retain": tool_retain_q, "stats": tool_stats, "report": tool_report, "pitfall": tool_pitfall, "pitfall_add": tool_pitfall_add,
               "pending": tool_pending, "queue_stats": tool_queue_stats, "flush": tool_flush}.get(name)
         if not fn:
             return (None, {"code": -32602, "message": "unknown tool: %s" % name})
@@ -463,7 +494,7 @@ class Handler(BaseHTTPRequestHandler):
         _ok, _who, _why = False, "", ""
         try:
             _c = _con()
-            _ok, _who, _why = _auth.verify(_c, self.headers.get("Authorization"))
+            _ok, _who_name, _why = _auth.verify(_c, self.headers.get("Authorization"))
             _c.close()
         except Exception as _e:
             _ok, _why = False, "auth error: %s" % _e
@@ -471,7 +502,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(401, {"jsonrpc": "2.0", "id": None,
                              "error": {"code": -32001, "message": "unauthorized: " + _why}})
             return
-        _CTX["who"] = _who
+        _CTX.who = _who_name
         try:
             msg = json.loads(raw or b"{}")
         except Exception:
