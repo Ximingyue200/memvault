@@ -315,3 +315,71 @@ def main(argv=None):
 
 if __name__ == "__main__":
     main()
+
+_CACHE = {}
+
+
+def _vec_of(text):
+    """给队列里的文本算向量（进程内缓存，队列最多几十条）。"""
+    key = hashlib.sha1(text.encode("utf-8")).hexdigest()
+    if key in _CACHE:
+        return _CACHE[key]
+    try:
+        from memvault import embed as emb
+        v = emb.embed([text])[0]
+    except Exception:
+        v = None
+    if len(_CACHE) > 500:
+        _CACHE.clear()
+    _CACHE[key] = v
+    return v
+
+
+def search(con, query, limit=5, min_score=0.35):
+    """在**还没出库**的暂存里找（跨 agent 可见）。返回 list[dict]。"""
+    import numpy as np
+
+    ensure(con)
+    rows = con.execute(
+        "SELECT id, agent, source, context, text, chars, created_at FROM retain_queue "
+        "WHERE state='pending' ORDER BY id DESC LIMIT 200"
+    ).fetchall()
+    if not rows:
+        return []
+    qv = _vec_of(query)
+    out = []
+    for r in rows:
+        text = r[4] or ""
+        score = 0.0
+        if qv is not None:
+            iv = _vec_of(text)
+            if iv is not None:
+                a = np.asarray(qv, dtype=np.float32)
+                b = np.asarray(iv, dtype=np.float32)
+                na, nb = float(np.linalg.norm(a)) or 1.0, float(np.linalg.norm(b)) or 1.0
+                score = float(np.dot(a, b) / (na * nb))
+        # 关键词兜底：查询里的词直接出现在正文里
+        hit = sum(1 for w in _tokens(query) if w and w in text)
+        if hit:
+            score = max(score, min(0.9, 0.35 + 0.15 * hit))
+        if score >= min_score:
+            out.append({
+                "id": r[0], "agent": r[1], "source": r[2], "context": r[3],
+                "text": text, "chars": r[5], "created_at": r[6],
+                "score": round(score, 4), "pending": True,
+            })
+    out.sort(key=lambda x: -x["score"])
+    return out[:limit]
+
+
+def _tokens(q):
+    """粗分词：中文按 2-4 字滑窗，英文按词。"""
+    q = (q or "").strip()
+    out = []
+    for m in __import__("re").finditer(r"[A-Za-z0-9_.-]{2,}", q):
+        out.append(m.group(0))
+    zh = "".join(ch for ch in q if "\u4e00" <= ch <= "\u9fff")
+    for n in (4, 3, 2):
+        for i in range(0, max(0, len(zh) - n + 1)):
+            out.append(zh[i:i + n])
+    return out[:60]

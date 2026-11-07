@@ -115,7 +115,7 @@ def _now():
     return time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
 
 
-def tool_recall(args):
+def _tool_recall_base(args):
     from memvault import search
 
     q = (args.get("query") or "").strip()
@@ -476,6 +476,24 @@ def main():
     srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     sys.stderr.write("[mcp] %s v%s listening on :%d (db=%s)\n" % (NAME, VERSION, PORT, DB))
     srv.serve_forever()
+
+
+
+def tool_recall(args):
+    """检索已入库的卡；顺带把**还没出库**的暂存也搜一遍（跨 agent 可见）。"""
+    out = _tool_recall_base(args)
+    try:
+        con = _con()
+        hits = _q.search(con, args.get("query") or "", limit=3)
+        con.close()
+    except Exception as e:
+        hits = []
+        print("[mcp] 暂存检索失败：%s" % e)
+    if isinstance(out, dict):
+        out["pending_hits"] = hits
+        if hits and not out.get("cards"):
+            out["note"] = "已入库的卡里没有，但暂存队列里有 %d 条还没提炼的，见 pending_hits" % len(hits)
+    return out
 
 
 if __name__ == "__main__":

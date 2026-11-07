@@ -176,6 +176,9 @@ mvtoken disable eta
 | `MEMVAULT_Q_SIM_DUP` | 0.93 | 余弦 ≥ 此值 → 判重跳过 |
 | `MEMVAULT_Q_SIM_NEW` | 0.80 | 0.80–0.93 → 新建并 supersede 旧卡 |
 
+> **`recall` 会同时搜暂存**：返回体里 `cards` 是已入库的卡，`pending_hits` 是还没出库的
+> 片段（带 `agent` 与 `score`，跨 agent 可见）。所以「字数不够还没刷出去」的东西也能被问到。
+
 三个工具配合：
 
 - `pending(limit)` —— 看别人刚写了什么还没提炼（多 agent 协作的可见性）
