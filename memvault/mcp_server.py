@@ -251,11 +251,17 @@ def tool_retain_q(args):
         qid = _q.enqueue(con, text, agent=_CTX.get("who") or "anonymous",
                          source="mcp", context=args.get("context"))
         ok, why = _q.should_flush(con)
+        auto = None
+        if ok:
+            try:
+                auto = _q.flush(con, force=False)   # autoflush
+            except Exception as _e:
+                auto = {"flushed": False, "reason": "%s: %s" % (type(_e).__name__, _e)}
         d = _q.depth(con)
     finally:
         con.close()
     return {"queued": True, "id": qid, "agent": _CTX.get("who"),
-            "trigger": why if ok else None, "queue": d,
+            "trigger": why if ok else None, "auto": auto, "queue": d,
             "note": "已进暂存队列，攒够阈值再提炼；要立刻提炼请调 flush"}
 
 

@@ -214,6 +214,15 @@ def flush(con, force=False, limit=None, dry=False):
         return {"flushed": False, "reason": "extract: %s" % str(e)[:80], **depth(con)}
 
     if not cards:
+        try:
+            from memvault.demoextract import split_cards
+            cards = split_cards(text, max_cards=8)
+            if cards:
+                print("[qflush] LLM 没给出可用结果，用本地规则切了 %d 条" % len(cards))
+        except Exception as e:
+            print("[qflush] 本地兜底也失败：%s" % e)
+
+    if not cards:
         for r in rows:
             con.execute("UPDATE retain_queue SET tries=tries+1, state=CASE WHEN tries>=2 THEN 'dead' ELSE 'pending' END WHERE id=?", (r[0],))
         con.commit()
