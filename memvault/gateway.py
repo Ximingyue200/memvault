@@ -1833,6 +1833,11 @@ class H(BaseHTTPRequestHandler):
         except Exception as e:
             out["_error"] = str(e)[:200]
         out.setdefault("openrouter_provider_order_enabled", "false")
+        try:
+            # 密钥类只回显 ****尾4：面板能看出「有没有配」，但拿不到明文
+            out = mask_values(out)
+        except Exception:
+            pass
         self._json(200, {"config": out})
 
     def _admin_config_put(self, key, raw):
@@ -1844,6 +1849,9 @@ class H(BaseHTTPRequestHandler):
             if isinstance(val, bool):
                 val = "true" if val else "false"
             val = str(val)
+            # 打码值（****abcd）表示「没改」：忽略写入，避免把掩码当成新密钥存进库
+            if val.startswith("****"):
+                return self._json(200, {"ok": True, "key": key, "unchanged": True})
             c = con()
             c.execute("INSERT INTO settings(k,v,updated_at) VALUES(?,?,datetime('now')) "
                       "ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_at=datetime('now')",
