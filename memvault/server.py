@@ -1311,6 +1311,71 @@ class Handler(BaseHTTPRequestHandler):
 
 
         # ==== 能力登记簿（可写） ====
+        if p.path == "/api/pitfall/ingest":
+            # 手机侧采集器推来的踩坑条目：{items:[{title,topic,body,quote,source,score}]}
+            import json as _j
+            try:
+                n = int(self.headers.get("content-length") or 0)
+                raw = self.rfile.read(n) if n else b"{}"
+                data = _j.loads(raw.decode("utf-8") or "{}")
+            except Exception as e:
+                return self._send(400, {"error": "bad json: %s" % str(e)[:120]})
+            items = data.get("items") or []
+            if not isinstance(items, list) or not items:
+                return self._send(400, {"error": "items 必须是非空数组"})
+            made = skip = 0
+            import hashlib as _h
+            import sqlite3 as _s3
+            from memvault import store as _st, pitfall as _pf
+            try:
+                con2 = _s3.connect(DB, timeout=20)
+            except Exception as e:
+                return self._send(500, {"error": "db: %s" % str(e)[:120]})
+            try:
+                for it in items[:50]:
+                    if not isinstance(it, dict):
+                        continue
+                    sig = _pf._norm_sig((it.get("topic") or it.get("quote") or "")[:300])
+                    if len(sig) < 8:
+                        skip += 1
+                        continue
+                    if con2.execute("select 1 from cards where extractor_version=? and topic=? limit 1",
+                                    (_pf.CARD_MARK, sig)).fetchone():
+                        skip += 1
+                        continue
+                    quote = (it.get("quote") or it.get("body") or "")[:800]
+                    sid = "sp_mp_" + _h.sha1((sig + quote[:60]).encode("utf-8")).hexdigest()[:16]
+                    con2.execute(
+                        "insert or ignore into spans(span_id,conv_id,msg_id,seq,role,ts,char_start,char_end,quote,text_hash,created_at) "
+                        "values(?,?,?,?,?,?,?,?,?,?,?)",
+                        (sid, "mobile", 0, 0, "assistant", __import__("datetime").datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                         0, len(quote), quote, _h.sha1(quote.encode("utf-8")).hexdigest(), __import__("datetime").datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))
+                    card = {
+                        "status": "active" if int(it.get("score") or 5) >= 5 else "proposal",
+                        "title": (it.get("title") or ("踩坑：" + sig))[:80],
+                        "body": (it.get("body") or ("现象：%s" % quote))[:2000],
+                        "kind": "event", "owner": "agent",
+                        "source_path": (it.get("source") or "pitfall/mobile")[:200],
+                        "extractor_version": _pf.CARD_MARK, "topic": sig,
+                    }
+                    evs = [{"span_id": sid, "role": "assistant", "quote": quote[:120],
+                            "char_start": 0, "char_end": min(120, len(quote)), "weight": 0.9}]
+                    cid, reason = _st.ingest_card(con2, card, evs, span_lookup=None)
+                    if not cid:
+                        skip += 1
+                        print("[ingest] 拒收(%s) %s" % (reason, sig[:60]), flush=True)
+                        continue
+                    try:
+                        from memvault import embed as _em
+                        _st.put_vector(con2, cid, _em.embed([card["title"] + " " + card["body"]])[0])
+                    except Exception:
+                        pass
+                    made += 1
+                con2.commit()
+            finally:
+                con2.close()
+            return self._send(200, {"ok": True, "made": made, "skipped": skip})
+
         if p.path == "/api/registry":
             if not self._auth():
                 return self._send(401, {"error": "unauthorized"})

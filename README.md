@@ -248,3 +248,4 @@ mvtoken disable eta
 ## License
 
 MIT
+| **自动采集** | `scripts/collectors/pitsync.js` 从原始会话里捞出 `isError=true` 的工具调用，配对随后的修复命令，推到 `/api/pitfall/ingest`（≥5 分直接 active）；服务端 `pitfallauto.py` 另可从 `spans` 批量回补 |
