@@ -1153,6 +1153,8 @@ class H(BaseHTTPRequestHandler):
             except Exception as e:
                 self._json(200, {"items": [], "error": str(e)[:200]})
         elif p in ("/v1/models", "/models"):
+            if not self._token_ok():
+                return
             self._json(200, {"object": "list", "data": [
                 {"id": "deepseek-flash", "object": "model", "owned_by": "upstream"},
                 {"id": "deepseek-v4-pro", "object": "model", "owned_by": "upstream"},
@@ -1814,6 +1816,24 @@ class H(BaseHTTPRequestHandler):
                         "color": COLOR.get(top, "#9aa3b0"), "count": n})
         self._json(200, {"categories": out})
 
+    def _token_ok(self):
+        """表里有启用中的 token 时，/v1 必须带 Bearer；表空则放行（平滑切换）。"""
+        try:
+            from memvault import auth as _a
+            import sqlite3 as _s3
+            con = _s3.connect(DB, timeout=3)
+            ok, who, why = _a.verify(con, self.headers.get("Authorization"))
+            con.close()
+            self._who = who or ""
+            if not ok:
+                self._json(401, {"error": {"message": "unauthorized: " + why,
+                                           "type": "invalid_request_error"}})
+            return ok
+        except Exception as e:
+            log("[auth] 校验失败，放行：%s" % e)
+            return True
+
+    # TOKEN_GUARD_PATCHED
     def _admin_config_get(self):
         """kiwi-mem config.js 用：返回扁平 {key: value}。"""
         out = {}
@@ -2220,6 +2240,8 @@ class H(BaseHTTPRequestHandler):
                  "/providers/test", "/v1/providers/test", "/providers/models") \
                 and not self._auth_ok():
             return self._json(401, {"error": {"message": "unauthorized: 需要 Authorization: Bearer $GW_TOKEN"}})
+        if (p.startswith("/v1/") or p in ("/chat/completions", "/responses")) and not self._token_ok():
+            return
         n = int(self.headers.get("content-length") or 0)
         raw = self.rfile.read(n) if n else b""
         if p.startswith("/admin/cradle/"):

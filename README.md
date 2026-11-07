@@ -147,6 +147,45 @@ scrub.py           入库前的凭据与隐私脱敏
 
 刻意没做的：不跑真实检索与抽取（需要模型 key 和真库，CI 里没有也不该有），不跑 lint 规则集（一个人维护，规则本身会变成第二个要维护的东西）。细节见 [`docs/CI.md`](docs/CI.md)。
 
+## 多 agent 协作
+
+一套库，多个 agent 写。为了避免「谁都能覆盖谁」和「每句碎片都写成一张卡」，写入走两道闸：
+
+**① 身份：token 就是 agent 名**
+
+```bash
+mvtoken create eta          # 打印一次明文，只存 sha256
+mvtoken list                # 看谁还有效
+mvtoken disable eta
+```
+
+建了第一个 token 之后，`/v1/*` 与 `/mcp` 就要带 `Authorization: Bearer <token>`；
+**表为空时不校验**，所以升级过程中不会把自己锁在外面。agent 不用自报名字，
+服务端按 token 反查 —— 队列里的 `agent` 字段是可信的。
+
+**② 写入：先进暂存队列**
+
+`retain` 不直接入库，先落 `retain_queue`，攒到阈值再统一「抽取 → 判重 → 合并/取代」：
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `MEMVAULT_Q_MIN` | 5 | 条数到了就刷 |
+| `MEMVAULT_Q_CHARS` | 1500 | 字数到了就刷 |
+| `MEMVAULT_Q_AGE_MIN` | 30 | 最老一条超过 30 分钟就刷 |
+| `MEMVAULT_Q_CAP` | 50 | 硬上限，必刷 |
+| `MEMVAULT_Q_SIM_DUP` | 0.93 | 余弦 ≥ 此值 → 判重跳过 |
+| `MEMVAULT_Q_SIM_NEW` | 0.80 | 0.80–0.93 → 新建并 supersede 旧卡 |
+
+三个工具配合：
+
+- `pending(limit)` —— 看别人刚写了什么还没提炼（多 agent 协作的可见性）
+- `queue_stats()` —— 各 agent 攒了多少、最老一条多久
+- `flush(force)` —— 立刻提炼，不等阈值
+
+`memvault-qflush.timer` 每 10 分钟看一次，够了就刷；队列刷出的卡是 `active`
+（`owner=agent`），不需要人工批准 —— 它们已经过判重与取代，不是碎片。
+
+
 ## 致谢 / Credits
 
 这个项目的**代码是原创的，设计是站在别人肩膀上的**。下面逐条写清楚「抄了什么、抄自哪里」，并按许可证保留对上游的感谢。

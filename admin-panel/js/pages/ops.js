@@ -65,6 +65,8 @@ export default {
         </div>
       </div>`).join("");
 
+    const q = ov.queue || { pending: 0, agents: [] };
+    const qAgents = (q.agents || []).map(x => `${escHtml(x.agent)} ${x.items} 条 / ${x.chars} 字`).join(" · ");
     const t = ov.today || {};
     root.querySelector("#op-body").innerHTML = `
       <div class="banner banner-info"><span>🩺</span><div>
@@ -78,6 +80,7 @@ export default {
         <div class="card"><div class="faint text-xs">库大小</div><div style="font-size:26px;font-weight:600">${ov.db_mb ?? "-"}</div><div class="faint text-xs">MB</div></div>
         <div class="card"><div class="faint text-xs">余额</div><div style="font-size:26px;font-weight:600">${ov.balance ?? "-"}</div><div class="faint text-xs">DeepSeek</div></div>
         <div class="card"><div class="faint text-xs">开机</div><div class="text-sm" style="margin-top:6px">${escHtml(ops.uptime || "-")}</div></div>
+        <div class="card"><div class="faint text-xs">待提炼</div><div style="font-size:26px;font-weight:600">${q.pending ?? 0}</div><div class="faint text-xs">${q.pending ? escHtml(qAgents || "") : "队列空"}</div></div>
       </div>
 
       <div class="grid-2" style="margin-top:18px">

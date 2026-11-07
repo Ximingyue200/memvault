@@ -345,3 +345,11 @@ def ensure(con: sqlite3.Connection) -> None:
     """幂等地把库补到完整形态；老库只补缺的表/索引，不动数据。"""
     con.executescript(SCHEMA_SQL)
     con.commit()
+    # token 与暂存队列：新装即具备（老库也补上）
+    try:
+        from . import auth as _a
+        from . import qflush as _q
+        _a.ensure(con)
+        _q.ensure(con)
+    except Exception:
+        pass

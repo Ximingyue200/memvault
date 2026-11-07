@@ -18,6 +18,11 @@ import os
 import sqlite3
 import sys
 import time
+
+from memvault import auth as _auth
+from memvault import qflush as _q
+
+_CTX = {"who": "anonymous"}
 import traceback
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -48,7 +53,7 @@ TOOLS = [
     },
     {
         "name": "retain",
-        "description": "把一条事实写进摇篮。会自动生成 span 作为证据，保持可追溯。\n写入后状态是 proposal，需人工批准（mvapprove）才会进检索。\n参数（JSON，可选字段可省略）：\n- text    string 必填  要记住的内容，一句话或一小段\n- title   string 可选  标题，不填取正文前 24 字\n- kind    string 可选  definition / event / preference / plan，默认 event\n- conv_id string 可选  会话标识，默认 mcp",
+        "description": "把一条事实写进摇篮。会自动生成 span 作为证据，保持可追溯。\n写入后状态是 proposal，需人工批准（mvapprove）才会进检索。\n参数（JSON，可选字段可省略）：\n- text    string 必填  要记住的内容，一句话或一小段\n- title   string 可选  标题，不填取正文前 24 字\n- kind    string 可选  definition / event / preference / plan，默认 event\n- conv_id string 可选  会话标识，默认 mcp\n- context string 可选  上下文/来源说明\n写入方式：先进暂存队列，攒够阈值再统一提炼（pending / queue_stats / flush 可查看与触发）",
         "inputSchema": {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
@@ -58,6 +63,7 @@ TOOLS = [
                 "title": {"type": "string", "description": "可选标题，不填取正文前 24 字"},
                 "kind": {"type": "string", "description": "definition / event / preference / plan，默认 event"},
                 "conv_id": {"type": "string", "description": "可选会话标识，默认 mcp"},
+                "context": {"type": "string", "description": "可选：上下文/来源说明"},
             },
             "required": ["text"],
         },
@@ -73,6 +79,30 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {}},
     },
 ]
+
+
+TOOLS.extend([
+    {
+        "name": "pending",
+        "description": "看暂存队列里尚未提炼的片段：谁写的、多久前、正文前 200 字。用于多 agent 协作时了解别人还没入库的东西。\n\n参数：\n- limit：可选，整数，默认 20",
+        "inputSchema": {"$schema": "http://json-schema.org/draft-07/schema#", "type": "object",
+                        "properties": {"limit": {"type": "integer", "description": "返回条数，默认 20"}},
+                        "additionalProperties": False},
+    },
+    {
+        "name": "queue_stats",
+        "description": "暂存队列概况：待提炼条数、总字数、最老一条时间，以及按 agent 分组。\n\n无参数。",
+        "inputSchema": {"$schema": "http://json-schema.org/draft-07/schema#", "type": "object",
+                        "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "flush",
+        "description": "立刻把暂存队列提炼入库（抽取 → 判重 → 合并/取代）。\n\n参数：\n- force：可选，布尔，忽略阈值强制刷",
+        "inputSchema": {"$schema": "http://json-schema.org/draft-07/schema#", "type": "object",
+                        "properties": {"force": {"type": "boolean", "description": "忽略阈值强制提炼"}},
+                        "additionalProperties": False},
+    },
+])
 
 
 def _con():
@@ -211,6 +241,52 @@ def tool_report(_args):
     return {"ok": False, "reason": "还没有日报，先跑一次 /usr/local/bin/mvhealth.py"}
 
 
+def tool_retain_q(args):
+    """retain 改成入队：攒够再一起提炼，避免碎片写成几十张卡。"""
+    text = (args.get("text") or "").strip()
+    if not text:
+        return {"queued": False, "reason": "text 为空"}
+    con = _con()
+    try:
+        qid = _q.enqueue(con, text, agent=_CTX.get("who") or "anonymous",
+                         source="mcp", context=args.get("context"))
+        ok, why = _q.should_flush(con)
+        d = _q.depth(con)
+    finally:
+        con.close()
+    return {"queued": True, "id": qid, "agent": _CTX.get("who"),
+            "trigger": why if ok else None, "queue": d,
+            "note": "已进暂存队列，攒够阈值再提炼；要立刻提炼请调 flush"}
+
+
+def tool_pending(args):
+    con = _con()
+    try:
+        items = _q.pending_items(con, int(args.get("limit") or 20))
+        d = _q.depth(con)
+    finally:
+        con.close()
+    return {"count": len(items), "queue": d, "items": items}
+
+
+def tool_queue_stats(_args):
+    con = _con()
+    try:
+        return _q.depth(con)
+    finally:
+        con.close()
+
+
+def tool_flush(args):
+    con = _con()
+    try:
+        return _q.flush(con, force=bool(args.get("force")))
+    except Exception as e:
+        return {"flushed": False, "reason": "%s: %s" % (type(e).__name__, e)}
+    finally:
+        con.close()
+
+
 def dispatch(method, params):
     """返回 (result, error)。"""
     if method == "initialize":
@@ -231,7 +307,8 @@ def dispatch(method, params):
     if method == "tools/call":
         name = (params or {}).get("name")
         args = (params or {}).get("arguments") or {}
-        fn = {"recall": tool_recall, "retain": tool_retain, "stats": tool_stats, "report": tool_report}.get(name)
+        fn = {"recall": tool_recall, "retain": tool_retain_q, "stats": tool_stats, "report": tool_report,
+              "pending": tool_pending, "queue_stats": tool_queue_stats, "flush": tool_flush}.get(name)
         if not fn:
             return (None, {"code": -32602, "message": "unknown tool: %s" % name})
         # 入参严格校验：schema 里写了 additionalProperties=false，服务端就得真的拒
@@ -340,6 +417,19 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         n = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(n) if n else b"{}"
+
+        _ok, _who, _why = False, "", ""
+        try:
+            _c = _con()
+            _ok, _who, _why = _auth.verify(_c, self.headers.get("Authorization"))
+            _c.close()
+        except Exception as _e:
+            _ok, _why = False, "auth error: %s" % _e
+        if not _ok:
+            self._send(401, {"jsonrpc": "2.0", "id": None,
+                             "error": {"code": -32001, "message": "unauthorized: " + _why}})
+            return
+        _CTX["who"] = _who
         try:
             msg = json.loads(raw or b"{}")
         except Exception:

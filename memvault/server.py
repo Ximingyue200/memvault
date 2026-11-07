@@ -204,22 +204,6 @@ def _chron_dict(row):
     return d
 
 
-def _llm_base(con):
-    """当前全局 LLM 基地址（默认是演示端点）。"""
-    try:
-        r = con.execute("select v from settings where k='llm.base'").fetchone()
-        if r and str(r[0]).strip():
-            return str(r[0]).strip()
-    except Exception:
-        pass
-    return "https://text.pollinations.ai/openai"
-
-
-def _is_demo_llm(con):
-    """还在用演示端点？面板据此弹一次性提示。"""
-    return "pollinations" in _llm_base(con).lower()
-
-
 def _con():
     return store.connect(DB)
 
@@ -302,6 +286,20 @@ def _payload(rows, max_chars=500):
         }
         for r in rows
     ]
+
+
+def _qd(_ignored=None):
+    """暂存队列概况（给面板用）——自己开连接，不依赖调用方那个。"""
+    try:
+        import sqlite3
+        from memvault import qflush
+        con = sqlite3.connect(os.environ.get("MEMVAULT_DB") or "/opt/memvault/data/memvault.db", timeout=2)
+        try:
+            return qflush.depth(con)
+        finally:
+            con.close()
+    except Exception as e:
+        return {"pending": 0, "error": str(e)[:80]}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -662,7 +660,8 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 balance = None
             return self._send(200, {
-                "cards": cards, "active": active, "proposal": proposal, "archive": archive,
+                "cards": cards,
+                "queue": _qd(con), "active": active, "proposal": proposal, "archive": archive,
                 "spans": spans, "vectors": vectors, "supersedes": supersedes,
                 "heat": round(float(heat), 4), "never": never, "covered_spans": seen,
                 "pending_learn": pending_learn,
@@ -674,7 +673,6 @@ class Handler(BaseHTTPRequestHandler):
                 "by_owner": [[k or "", v] for k, v in by_owner],
                 "db_mb": db_mb, "reports": reports, "report": report[:4000],
                 "backups": backups, "last_backup": last_backup, "balance": balance,
-                "demo_llm": _is_demo_llm(con), "llm_base": _llm_base(con),
             })
 
         if p.path == "/api/settings":
