@@ -84,6 +84,13 @@ TOOLS = [
 
 TOOLS.extend([
     {
+        "name": "pitfall",
+        "description": "查以前踩过的坑。传报错原文（如 bind: cannot assign requested address）或一句自然语言（如 容器起不来 / 思考模式 400），返回现象、修法、影响。排障第一步先调它，命中就别重新踩。\n\n参数：\n- query：必填，报错串或问题描述",
+        "inputSchema": {"$schema": "http://json-schema.org/draft-07/schema#", "type": "object",
+                        "properties": {"query": {"type": "string", "description": "报错串或问题描述"}},
+                        "required": ["query"], "additionalProperties": False},
+    },
+    {
         "name": "pending",
         "description": "看暂存队列里尚未提炼的片段：谁写的、多久前、正文前 200 字。用于多 agent 协作时了解别人还没入库的东西。\n\n参数：\n- limit：可选，整数，默认 20",
         "inputSchema": {"$schema": "http://json-schema.org/draft-07/schema#", "type": "object",
@@ -230,6 +237,27 @@ def tool_stats(_args):
         con.close()
 
 
+def tool_pitfall(args):
+    """按报错串或自然语言查踩过的坑。"""
+    q = str((args or {}).get("query") or "").strip()
+    if not q:
+        return {"ok": False, "error": "query 不能为空"}
+    out = []
+    try:
+        from memvault import pitfall as _pf
+        con = _con()
+        try:
+            rows = _pf.search(con, q, limit=3)
+        finally:
+            con.close()
+        for r in rows:
+            out.append({"id": r[0], "title": r[1], "topic": r[2],
+                        "body": r[3], "created_at": r[4]})
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+    return {"ok": True, "query": q, "count": len(out), "items": out}
+
+
 def tool_report(_args):
     for path in ("/opt/memvault/reports/latest.md",):
         try:
@@ -321,7 +349,7 @@ def dispatch(method, params):
     if method == "tools/call":
         name = (params or {}).get("name")
         args = (params or {}).get("arguments") or {}
-        fn = {"recall": tool_recall, "retain": tool_retain_q, "stats": tool_stats, "report": tool_report,
+        fn = {"recall": tool_recall, "retain": tool_retain_q, "stats": tool_stats, "report": tool_report, "pitfall": tool_pitfall,
               "pending": tool_pending, "queue_stats": tool_queue_stats, "flush": tool_flush}.get(name)
         if not fn:
             return (None, {"code": -32602, "message": "unknown tool: %s" % name})
