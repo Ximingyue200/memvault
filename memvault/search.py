@@ -354,10 +354,12 @@ def search(con, q, topk=10, min_score=0.30, intent=None, role_filter=None, owner
     # 旧卡 → 新卡 映射（supersedes 是「新卡指向旧卡」，所以反查得到谁被取代）
     _sup_map = {}
     try:
-        for _oid, _nid in con.execute(
+        # supersedes 是「新卡.supersedes = 旧卡.id」；这里要建的是 旧→新，
+        # 之前写反了：结果被降权的是刚写进来的新卡，新卡一入库就搜不到。
+        for _new_id, _old_id in con.execute(
             "SELECT id, supersedes FROM cards WHERE supersedes IS NOT NULL AND supersedes<>0"
         ):
-            _sup_map[int(_oid)] = int(_nid)
+            _sup_map[int(_old_id)] = int(_new_id)
     except Exception:
         _sup_map = {}
 

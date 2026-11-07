@@ -23,6 +23,9 @@ QCAP = int(os.environ.get("MEMVAULT_Q_CAP", "50"))
 BATCH = int(os.environ.get("MEMVAULT_Q_BATCH", "20"))
 SIM_DUP = float(os.environ.get("MEMVAULT_Q_SIM_DUP", "0.93"))
 SIM_NEW = float(os.environ.get("MEMVAULT_Q_SIM_NEW", "0.80"))
+SIM_CHANGE = float(os.environ.get("MEMVAULT_Q_SIM_CHANGE", "0.55"))
+# 「改主意」的说法：这类句子即便相似度不高，也应该去找旧卡来取代
+_CHANGE_RE = __import__("re").compile(r"(改成|改为|改到|换成|换成用|不再|取消|以后|现在用|调整成|更正|修正)")
 
 DDL = """CREATE TABLE IF NOT EXISTS retain_queue(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -159,6 +162,25 @@ def _matrix(con):
     return m
 
 
+def _iter_cards(con):
+    for r in con.execute("SELECT c.id, v.vec FROM cards c JOIN vectors v ON v.card_id=c.id WHERE c.status IN ('active','proposal')"):
+        try:
+            yield r[0], np.frombuffer(r[1], dtype=np.float32)
+        except Exception:
+            continue
+
+
+def _cos(a, b):
+    na, nb = float(np.linalg.norm(a)) or 1.0, float(np.linalg.norm(b)) or 1.0
+    return float(np.dot(a, b) / (na * nb))
+
+
+def _share_word(x, y, n=2):
+    xs = {x[i:i + n] for i in range(max(0, len(x) - n + 1)) if "\u4e00" <= x[i] <= "\u9fff"}
+    ys = {y[i:i + n] for i in range(max(0, len(y) - n + 1)) if "\u4e00" <= y[i] <= "\u9fff"}
+    return len(xs & ys) >= 2
+
+
 def _best(vec, mat, con):
     import numpy as np
 
@@ -188,7 +210,39 @@ def _span_for(con, text, tag):
     return sid
 
 
-def flush(con, force=False, limit=None, dry=False):
+LOCK_PATH = os.environ.get("MEMVAULT_QLOCK", "/opt/memvault/data/.qflush.lock")
+
+
+def _flock(blocking=True):
+    """跨进程互斥：MCP 进程与定时器抢同一把锁，否则会各建一张重复卡。"""
+    import fcntl
+    fh = open(LOCK_PATH, "a+")
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+        return fh
+    except BlockingIOError:
+        fh.close()
+        return None
+
+
+def flush(con, force=False, limit=None, dry=False, blocking=True):
+    if not dry:
+        _lk = _flock(blocking)
+        if _lk is None:
+            return {"flushed": False, "reason": "另一处正在提炼", **depth(con)}
+        try:
+            return _flush_locked(con, force=force, limit=limit, dry=False)
+        finally:
+            try:
+                import fcntl
+                fcntl.flock(_lk.fileno(), fcntl.LOCK_UN)
+            except Exception:
+                pass
+            _lk.close()
+    return _flush_locked(con, force=force, limit=limit, dry=dry)
+
+
+def _flush_locked(con, force=False, limit=None, dry=False):
     from memvault import embed as emb
     from memvault import extract as ex
     from memvault import store
@@ -198,6 +252,18 @@ def flush(con, force=False, limit=None, dry=False):
         return {"flushed": False, "reason": why, **depth(con)}
 
     rows = _pending(con, limit or BATCH)
+    if rows:
+        # 原子领取：谁先改到 processing 谁负责，避免两个 flush 处理同一批
+        ids = [r[0] for r in rows]
+        con.executemany(
+            "UPDATE retain_queue SET state='processing' WHERE id=? AND state='pending'",
+            [(i,) for i in ids],
+        )
+        con.commit()
+        claimed = {r[0] for r in con.execute(
+            "SELECT id FROM retain_queue WHERE state='processing' AND id IN (%s)" % ",".join("?" * len(ids)), ids
+        )}
+        rows = [r for r in rows if r[0] in claimed]
     if not rows:
         return {"flushed": False, "reason": "empty", **depth(con)}
 
@@ -205,13 +271,12 @@ def flush(con, force=False, limit=None, dry=False):
     agents = sorted({r[1] for r in rows})
     tag = ",".join(agents)
 
+    cards = []
     try:
         cards = ex.extract(text, max_cards=8)
     except Exception as e:
-        for r in rows:
-            con.execute("UPDATE retain_queue SET tries=tries+1, state=CASE WHEN tries>=2 THEN 'dead' ELSE 'pending' END WHERE id=?", (r[0],))
-        con.commit()
-        return {"flushed": False, "reason": "extract: %s" % str(e)[:80], **depth(con)}
+        # 抽取挂了不该整批作废：交给下面的本地规则兜底
+        print("[qflush] 抽取异常，转本地兜底：%s" % str(e)[:120])
 
     if not cards:
         try:
@@ -254,6 +319,16 @@ def flush(con, force=False, limit=None, dry=False):
                 (now(), best_id),
             )
             continue
+
+        # 改主意的句子：放宽相似度门槛，但要求共享关键词，避免误取代
+        if not (best_id and SIM_NEW <= cos < SIM_DUP) and _CHANGE_RE.search(text or ""):
+            alt_id, alt_c = None, 0.0
+            for cid0, c0 in _iter_cards(con):
+                c2 = _cos(v, c0) if v is not None else 0.0
+                if c2 > alt_c and c2 >= SIM_CHANGE and _share_word(text, c0):
+                    alt_id, alt_c = cid0, c2
+            if alt_id:
+                best_id, cos = alt_id, max(cos, alt_c)
 
         card = {
             "title": title,
@@ -304,6 +379,12 @@ def main(argv=None):
     con = sqlite3.connect(db)
     con.row_factory = sqlite3.Row
     ensure(con)
+    import json
+    if "--requeue" in argv:
+        n = con.execute("UPDATE retain_queue SET state='pending', tries=0 WHERE state IN ('dead','processing')").rowcount
+        con.commit()
+        print(json.dumps({"requeued": n}, ensure_ascii=False))
+        return
     if "--status" in argv:
         import json
         print(json.dumps(depth(con), ensure_ascii=False))

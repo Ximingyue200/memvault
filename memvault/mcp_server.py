@@ -23,6 +23,7 @@ from memvault import auth as _auth
 from memvault import qflush as _q
 
 _CTX = {"who": "anonymous"}
+_FLUSH_LOCK = __import__("threading").Lock()
 import traceback
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -254,7 +255,13 @@ def tool_retain_q(args):
         auto = None
         if ok:
             try:
-                auto = _q.flush(con, force=False)   # autoflush
+                if _FLUSH_LOCK.acquire(blocking=False):
+                    try:
+                        auto = _q.flush(con, force=False)   # autoflush（同一时刻只许一个）
+                    finally:
+                        _FLUSH_LOCK.release()
+                else:
+                    auto = {"flushed": False, "reason": "another flush running"}
             except Exception as _e:
                 auto = {"flushed": False, "reason": "%s: %s" % (type(_e).__name__, _e)}
         d = _q.depth(con)
@@ -286,7 +293,8 @@ def tool_queue_stats(_args):
 def tool_flush(args):
     con = _con()
     try:
-        return _q.flush(con, force=bool(args.get("force")))
+        with _FLUSH_LOCK:
+            return _q.flush(con, force=bool(args.get("force")))
     except Exception as e:
         return {"flushed": False, "reason": "%s: %s" % (type(e).__name__, e)}
     finally:
@@ -473,7 +481,12 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    class _Srv(ThreadingHTTPServer):
+        # 默认 backlog 只有 5，一批 agent 同时连就会 RST
+        request_queue_size = 256
+        daemon_threads = True
+
+    srv = _Srv(("0.0.0.0", PORT), Handler)
     sys.stderr.write("[mcp] %s v%s listening on :%d (db=%s)\n" % (NAME, VERSION, PORT, DB))
     srv.serve_forever()
 

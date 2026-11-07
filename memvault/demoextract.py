@@ -18,6 +18,16 @@ _DROP = re.compile(r"^(嗯|好的|哈哈|谢谢|收到|ok|OK)\b")
 MAXLEN = 600
 
 
+import re as _re
+
+
+def _clean_title(s, n=24):
+    """兜底标题别把「记录: 」这种前缀带进卡片标题。"""
+    t = _re.sub(r"^\s*(记录|备忘|记一下|提醒)\s*[:：]\s*", "", s).strip()
+    t = t.split("。")[0].split("，")[0].strip() or s.strip()
+    return t[:n]
+
+
 def split_cards(text, max_cards=8):
     """把一段话切成一两条 note 卡；抽不出来就返回空列表。"""
     text = (text or "").strip()
@@ -37,7 +47,7 @@ def split_cards(text, max_cards=8):
             continue
         seen.add(key)
         out.append({
-            "title": s[:24],
+            "title": _clean_title(s),
             "body": s,
             "kind": "note",
             "topic": None,
