@@ -719,6 +719,42 @@ def _wants_search(q, force=False):
     return False, "no-intent"
 
 
+_ERRHINT = __import__("re").compile(
+    r"(报错|错误|失败|起不来|挂了|连不上|超时|异常|command not found|No such file|"
+    r"Permission denied|Error|Exception|Traceback|ECONN|EADDR|ENOENT|exit code|"
+    r"malformed|no such (column|table|module)|bind:)", __import__("re").I)
+
+
+def pitfall_block(q):
+    """这句话听着像在排障时，把以前踩过的坑先摆出来（最多 2 条，≤700 字）。"""
+    if not q or not _ERRHINT.search(q):
+        return ""
+    try:
+        import sqlite3 as _s3
+        from . import pitfall as _pf
+        c = _s3.connect(DB, timeout=3)
+        try:
+            rows = _pf.search(c, q, limit=2)
+        finally:
+            c.close()
+    except Exception as e:
+        log("pitfall search fail: %s" % str(e)[:80])
+        return ""
+    if not rows:
+        return ""
+    out = ["【你以前踩过同样的坑】命中就按修法做，别重踩："]
+    for r in rows[:2]:
+        _id, title, topic, body, _at = r[0], r[1], r[2], r[3], r[4]
+        out.append("- #%s %s" % (_id, (title or topic or "")[:60]))
+        for line in str(body or "").splitlines()[:3]:
+            line = line.strip()
+            if line:
+                out.append("  " + line[:180])
+    text = "\n".join(out)[:700]
+    log("pitfall block %dB (%d hit)" % (len(text), len(rows)))
+    return text
+
+
 def skills_block():
     """用户手工登记的技能（settings.skills），启用的拼成一段。"""
     try:
@@ -1639,6 +1675,11 @@ class H(BaseHTTPRequestHandler):
                 add("检索 recall", recall_block(q), "按这句话检索到的卡片")
             except Exception as e:
                 parts.append({"name": "检索 recall", "chars": 0, "note": "失败: %s" % str(e)[:120], "text": ""})
+            # 3.5 踩坑
+            try:
+                add("踩坑 pitfall", pitfall_block(q), "这句话像排障时，把以前踩过的坑摆出来")
+            except Exception as e:
+                parts.append({"name": "踩坑 pitfall", "chars": 0, "note": "失败: %s" % str(e)[:120], "text": ""})
             # 4. 技能
             try:
                 add("技能 skills", skills_block(), "启用的技能清单")
@@ -2771,6 +2812,9 @@ class H(BaseHTTPRequestHandler):
         _rb = recall_block(q)
         if _rb:
             block = (block + "\n\n" + _rb) if block else _rb
+        _pb = pitfall_block(q)
+        if _pb:
+            block = (block + "\n\n" + _pb) if block else _pb
         try:
             from .scene import scene_block as _scene_block
             _sb = _scene_block(q)
@@ -3146,6 +3190,9 @@ class H(BaseHTTPRequestHandler):
                     rb = recall_block(q)
                     if rb:
                         blk = (blk + "\n\n" + rb) if blk else rb
+                    pb = pitfall_block(q)
+                    if pb:
+                        blk = (blk + "\n\n" + pb) if blk else pb
                 except Exception:
                     pass
                 if blk:
