@@ -12,9 +12,9 @@ const path = require("path");
 const zlib = require("zlib");
 const { execFileSync } = require("child_process");
 
-const SD = "/storage/emulated/0/MT2/dsh/1/记忆库/sessions/phone";
-const RECENT = "/data/user/0/app.dsh.mobile/files/dsh-home/sessions/--storage-emulated-0-MT2-dsh-1--";
-const API = process.env.CRADLE_API || "http://10.200.0.17:4174";
+const SD = process.env.PITSRC || "/path/to/sessions/phone";
+const RECENT = process.env.PITSRC_LIVE || "";
+const API = process.env.CRADLE_API || "http://127.0.0.1:4174";
 const TOKEN = (() => {
   try { return fs.readFileSync(process.env.HOME + "/.cradle-token", "utf8").trim(); } catch { return ""; }
 })();

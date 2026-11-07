@@ -81,7 +81,7 @@ export default {
       const n = prompt("端点名字，如 cradle：");
       if (!n) return;
       this.collect();
-      this.doc.mcp.unshift({ name: n.trim(), title: n.trim(), url: "http://10.200.0.17:4181/mcp", transport: "streamable_http", desc: "" });
+      this.doc.mcp.unshift({ name: n.trim(), title: n.trim(), url: "http://MEMVAULT_HOST:4181/mcp", transport: "streamable_http", desc: "" });
       this.render(); this.markDirty();
     };
     el.querySelectorAll("[data-dels]").forEach(b => {

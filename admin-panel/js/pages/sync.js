@@ -40,7 +40,7 @@ export default {
             </div>`).join("") || '<div class="empty">还没有备份</div>'}
         </div>
         <p class="faint text-xs mt24">
-          异地目标：<code>root@10.200.0.19:/root/mvbackup/</code>（CT113，docker 宿主）。
+          异地目标：<code>&lt;user&gt;@&lt;backup-host&gt;:/path/to/backup/</code>（CT113，docker 宿主）。
           备份脚本 <code>/usr/local/bin/mvbackup.sh</code>，定时器 <code>memvault-backup.timer</code>。
         </p>`;
 
